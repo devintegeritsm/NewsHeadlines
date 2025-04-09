@@ -37,8 +37,10 @@ def ensure_storage_bucket():
                 }
             )
             print("Storage bucket 'content' created successfully.")
+            return True
         else:
             print("Storage bucket 'content' exists.")
+            return True
             
     except Exception as e:
         print(f"Error managing storage bucket: {e}")
@@ -55,9 +57,10 @@ def ensure_storage_bucket():
                 }
             )
             print("Storage bucket 'content' created successfully.")
+            return True
         except Exception as create_error:
             print(f"Failed to create bucket: {create_error}")
-            raise create_error
+            return False
 
 def ensure_content_table():
     """Ensure the content table exists with the correct schema."""
@@ -276,9 +279,53 @@ def upload_specific_audio_file():
     except Exception as e:
         print(f"Error uploading MP3 file: {e}")
         return False, None
+    
+def list_files_in_supabase():
+    """List all files in the content bucket on Supabase."""
+    try:
+        # Get all files from the content bucket
+        files = supabase_admin.storage.from_("content").list()
+        # files = supabase.storage.from_("content").list()
+        print(f"Found {len(files)} files on Supabase")
+        for file in files:
+            print(file)
+    except Exception as e:
+        print(f"Error listing files on Supabase: {str(e)}")
 
+def get_files_from_supabase(path: str):
+    """Get all files from a specific path in the content bucket on Supabase."""
+    try:
+        files = supabase_admin.storage.from_("content").list(path)
+        print(f"Found {len(files)} files in {path} on Supabase")
+        return files
+    except Exception as e:
+        print(f"Error listing article files on Supabase: {str(e)}")
+        return []
+    
+def get_headlines_from_supabase():
+    """Get all headlines from the content table on Supabase."""
+    try:
+        test_query = supabase.table("content") \
+                            .select("count") \
+                            .eq("content_type", "headlines") \
+                            .execute()
+        print(f"Test query: {test_query}") 
+
+        headlines = supabase.table("content") \
+                             .select("*") \
+                             .eq("content_type", "headlines") \
+                             .execute()
+        
+        print(f"Found {headlines} on Supabase")
+        return headlines
+    except Exception as e:
+        print(f"Error getting headlines from Supabase: {str(e)}")
+        return []
+    
 if __name__ == "__main__":
     print("Starting Supabase test...")
     # test_supabase_functionality()
-    upload_specific_audio_file()
+    # upload_specific_audio_file()
+    # list_files_in_supabase()
+    get_headlines_from_supabase()
     print("Supabase test completed.") 

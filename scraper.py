@@ -11,9 +11,16 @@ import soundfile as sf
 import numpy as np
 from f5_tts_mlx.generate import generate
 import base64
+from supabase_api import get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
+from bs4 import BeautifulSoup
+import supabase
+from supabase import create_client
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Initialize Supabase client
+supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Configure the custom AI API
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
@@ -21,132 +28,22 @@ MODEL_NAME = "gemma-3-12b-it"
 AI_TIMEOUT = 300  # 5 minutes timeout (increased from 3 minutes)
 AI_CHUNK_SIZE = 8192  # Buffer size for reading response
 
-# Configure the website API
-WEBSITE_API_URL = "https://ee698794-a909-4a3b-b7ff-a1e78102b549-00-1h9txqc27ajmx.kirk.replit.dev"
-WEBSITE_API_USERNAME = "dev"
-WEBSITE_API_PASSWORD = "aaaaaa"
-WEBSITE_API_TOKEN = None
-
-# Function to authenticate with the website API
-def authenticate_with_website_api():
-    """Authenticate with the website API and get a token."""
-    global WEBSITE_API_TOKEN
-    
-    url = f"{WEBSITE_API_URL}/api/auth/login"
-    payload = {
-        "username": WEBSITE_API_USERNAME,
-        "password": WEBSITE_API_PASSWORD
-    }
-    
-    try:
-        response = requests.post(url, json=payload)
-        response.raise_for_status()
-        result = response.json()
-        WEBSITE_API_TOKEN = result.get("token")
-        print(f"Successfully authenticated with website API")
-        return True
-    except Exception as e:
-        print(f"Error authenticating with website API: {e}")
-        return False
-
-# Function to upload content to the website API
-def upload_content_to_website(date_str, content_type, filename, content, is_binary=False):
-    """
-    Upload content to the website API.
-
-    Args:
-        date_str: Date string in YYYY-MM-DD format
-        content_type: Type of content (article, headlines, audio)
-        filename: Name of the file
-        content: File content (binary for audio, text for HTML/markdown)
-        is_binary: Whether the content is binary (for audio files)
-
-    Returns:
-        Success status and URL if successful
-    """
-    global WEBSITE_API_TOKEN
-    
-    # Ensure we have a valid token
-    if not WEBSITE_API_TOKEN and not authenticate_with_website_api():
-        return False, None
-    
-    # API endpoint
-    url = f"{WEBSITE_API_URL}/api/content/upload"
-    
-    # Headers
-    headers = {
-        "Authorization": f"Bearer {WEBSITE_API_TOKEN}",
-        "Content-Type": "application/json"
-    }
-    
-    # Prepare content
-    if is_binary:
-        # For binary files like audio, encode as base64
-        content_encoded = base64.b64encode(content).decode('utf-8')
-    else:
-        # For text files, just use the content as is
-        content_encoded = content
-    
-    # Prepare payload
-    payload = {
-        "date": date_str,
-        "content_type": content_type,
-        "filename": filename,
-        "content": content_encoded,
-        "metadata": {
-            "source": "newsapp",
-            "generated_at": datetime.now().isoformat()
-        }
-    }
-    
-    # Send request
-    try:
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        result = response.json()
-        return True, result.get("url")
-    except Exception as e:
-        print(f"Error uploading content: {e}")
-        # If token expired, try to re-authenticate and retry once
-        if "401" in str(e) or "403" in str(e):
-            if authenticate_with_website_api():
-                headers["Authorization"] = f"Bearer {WEBSITE_API_TOKEN}"
-                try:
-                    response = requests.post(url, json=payload, headers=headers)
-                    response.raise_for_status()
-                    result = response.json()
-                    return True, result.get("url")
-                except Exception as retry_error:
-                    print(f"Error on retry upload: {retry_error}")
-        return False, None
-
 # Function to test the API functionality
 def test_api_functionality():
-    """Test the API functionality with a simple test file."""
+    """Test the API functionality by checking if the content bucket exists."""
     print("Testing API functionality...")
     
-    # Authenticate with the API
-    if not authenticate_with_website_api():
-        print("Failed to authenticate with the API. Aborting test.")
-        return False
-    
-    # Create a test file
-    test_date = datetime.now().strftime("%Y-%m-%d")
-    test_content = "This is a test file to verify API functionality."
-    
-    # Upload the test file
-    success, url = upload_content_to_website(
-        date_str=test_date,
-        content_type="test",
-        filename="test.txt",
-        content=test_content
-    )
-    
-    if success:
-        print(f"API test successful! Test file uploaded to: {url}")
-        return True
-    else:
-        print("API test failed. Check the error messages above.")
+    try:
+        # Check if content bucket exists
+        bucket_exists = ensure_storage_bucket()
+        if bucket_exists:
+            print("API test successful! Content bucket exists and is accessible.")
+            return True
+        else:
+            print("API test failed. Content bucket does not exist or is not accessible.")
+            return False
+    except Exception as e:
+        print(f"API test failed with error: {str(e)}")
         return False
 
 def extract_date_from_url(url):
@@ -220,14 +117,20 @@ def extract_headlines(content):
     3. Often contain keywords like ":", "-", or are in title case
     4. Do not end with periods
     """
+    print("Starting headline extraction...")
     headlines = []
     lines = content.split('\n')
+    
+    print(f"Processing {len(lines)} lines of content...")
     
     # Skip the first line which is usually "What matters now"
     for i in range(1, len(lines)):
         line = lines[i].strip()
         if not line:
             continue
+            
+        # Print first few characters of the line for debugging
+        print(f"Processing line {i}: {line[:50]}...")
             
         # Check if this line is likely a headline
         if len(line) < 100 and not line.endswith('.'):  # Headlines are typically shorter and don't end with periods
@@ -247,7 +150,16 @@ def extract_headlines(content):
                         line.istitle() or  # Title case is common in headlines
                         any(word.isupper() for word in line.split()) or  # Contains uppercase words
                         (i > 0 and not lines[i-1].strip())):  # Preceded by a blank line
+                        print(f"Found headline: {line}")
                         headlines.append(line)
+    
+    print(f"Finished processing. Found {len(headlines)} headlines.")
+    if headlines:
+        print("Headlines found:")
+        for headline in headlines:
+            print(f"- {headline}")
+    else:
+        print("No headlines found. Content might need different parsing.")
     
     return headlines
 
@@ -444,63 +356,142 @@ def format_content_with_headlines(content, title, filtered_headlines):
     return markdown
 
 def save_content_to_file(content, filename):
-    """Save content to a file."""
+    """Save content to a file and upload to Supabase."""
     try:
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"\nContent saved to: {filename}")
-        return True
+        # Extract date from filename or parent folder
+        if filename.endswith('.mp3'):
+            # For audio files, get the date from the parent folder name (YYYY-MM-DD-article)
+            parent_folder = os.path.dirname(filename)
+            if parent_folder and '-article' in parent_folder:
+                date_str = parent_folder.split('-article')[0]
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+        else:
+            # For other files, extract from filename (format: YYYY-MM-DD-*.ext)
+            date_parts = filename.split('-')
+            if len(date_parts) >= 3 and all(part.isdigit() for part in date_parts[:3]):
+                date_str = '-'.join(date_parts[:3])
+            else:
+                date_str = datetime.now().strftime("%Y-%m-%d")
+        
+        # Determine content type from filename
+        if 'headlines' in filename:
+            content_type = 'headlines'
+        elif filename.endswith('.mp3'):
+            content_type = 'audio'
+        else:
+            content_type = 'article'
+        
+        # For article files, check if they exist in Supabase before uploading
+        if content_type == 'article':
+            try:
+                # List files in the article directory
+                files = supabase.storage.from_("content").list(f"{date_str}/article")
+                file_exists = any(f['name'] == filename for f in files)
+                
+                if file_exists:
+                    print(f"Article file {filename} already exists in Supabase. Skipping upload.")
+                    return True
+            except Exception as e:
+                print(f"Error checking if article exists in Supabase: {e}")
+                # Continue with upload if check fails
+        
+        # Upload to Supabase
+        try:
+            success, url = upload_content_to_supabase(
+                date_str=date_str,
+                content_type=content_type,
+                filename=filename,
+                content=content,
+                is_binary=filename.endswith('.mp3')
+            )
+            
+            if success:
+                print(f"Successfully uploaded {filename} to Supabase: {url}")
+                return True
+            else:
+                print(f"Failed to upload {filename} to Supabase")
+                return False
+                
+        except Exception as upload_error:
+            if "Duplicate" in str(upload_error):
+                print(f"File {filename} already exists in Supabase. Skipping upload.")
+                return True  # Consider it a success since the file exists
+            else:
+                print(f"Error uploading to Supabase: {upload_error}")
+                return False
+            
     except Exception as e:
-        print(f"\nError saving content to file: {e}")
+        print(f"Error saving content to Supabase: {e}")
         return False
 
-def split_content_by_topics(content, headlines, output_folder):
-    """Split content into separate files by topic/headline"""
-    if not headlines:
-        print("No headlines provided for content splitting")
-        return
+def split_content_by_topics(content, headlines, article_folder):
+    """Split content into separate files based on headlines."""
+    try:
+        # Get the date from the article folder name
+        date_str = article_folder.split('-article')[0]
 
-    # Ensure output folder exists
-    os.makedirs(output_folder, exist_ok=True)
-
-    # Clean and prepare content
-    content = content.strip()
-    
-    # Split content by headlines
-    sections = []
-    current_section = []
-    content_lines = content.split('\n')
-    
-    for line in content_lines:
-        line = line.strip()
-        if any(headline.lower() in line.lower() for headline in headlines):
-            if current_section:
-                sections.append('\n'.join(current_section))
-            current_section = [line]
-        elif line:
-            current_section.append(line)
-    
-    if current_section:
-        sections.append('\n'.join(current_section))
-
-    # Write sections to files
-    for i, section in enumerate(sections):
-        # Find matching headline
-        matching_headline = None
-        for headline in headlines:
-            if headline.lower() in section.lower():
-                matching_headline = headline
-                break
+        files = get_files_from_supabase(f"{date_str}/article")
+        # Split content into sections based on headlines
+        sections = []
+        current_section = []
+        lines = content.split('\n')
         
-        if matching_headline:
-            # Create safe filename from headline
-            safe_filename = re.sub(r'[^\w\s-]', '', matching_headline.lower())
-            safe_filename = re.sub(r'[-\s]+', '-', safe_filename).strip('-')
-            filepath = os.path.join(output_folder, f"{safe_filename}.md")
+        for line in lines:
+            # Check if line matches any headline
+            if any(headline.lower() in line.lower() for headline in headlines):
+                if current_section:
+                    sections.append('\n'.join(current_section))
+                current_section = [line]
+            else:
+                current_section.append(line)
+        
+        if current_section:
+            sections.append('\n'.join(current_section))
+        
+        # Create a file for each section
+        for i, section in enumerate(sections):
+            # Get the first line as the title
+            title = section.split('\n')[0].strip()
+            # Create a filename from the title
+            filename = title.lower()
+            # Remove special characters and replace spaces with hyphens
+            filename = re.sub(r'[^\w\s-]', '', filename)  # Remove all special characters except hyphens
+            filename = re.sub(r'[-\s]+', '-', filename)  # Replace multiple spaces/hyphens with single hyphen
+            filename = filename.strip('-')  # Remove leading/trailing hyphens
+            filename = f"{filename}.md"
+            filepath = os.path.join(article_folder, filename)
             
+            # Write the content to the file
             with open(filepath, 'w', encoding='utf-8') as f:
-                f.write(section.strip())
-            print(f"Created article file: {filepath}")
+                f.write(section)
+
+            article_filename = os.path.basename(filepath)
+            print(f"Precessing article file {article_filename}...")
+            try:
+                article_exists = any(f['name'] == article_filename for f in files)
+                if article_exists:
+                    print(f"Article file already exists in Supabase for {filepath}")
+                    continue    
+            except Exception as e:
+                print(f"Error checking article file on Supabase: {str(e)}")
+            
+            # Upload the file to Supabase
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                success, url = upload_content_to_supabase(date_str, "article", article_filename, content)
+                if success:
+                    print(f"Successfully uploaded {filename} to Supabase: {url}")
+                else:
+                    print(f"Failed to upload {filename} to Supabase")
+            except Exception as e:
+                print(f"Error uploading {filename} to Supabase: {str(e)}")
+        
+        return True
+    except Exception as e:
+        print(f"Error splitting content: {str(e)}")
+        return False
 
 def save_topic_files(headlines, folder_name):
     """Save topic files to the specified folder"""
@@ -517,9 +508,45 @@ def save_topic_files(headlines, folder_name):
     
     return topic_files
 
+def clean_html_tags(content):
+    """Remove HTML tags from content while preserving text and structure."""
+    # First, preserve line breaks by replacing <br>, </p>, and </div> with newlines
+    content = re.sub(r'<br[^>]*>', '\n', content, flags=re.IGNORECASE)
+    content = re.sub(r'</p>', '\n\n', content, flags=re.IGNORECASE)
+    content = re.sub(r'</div>', '\n', content, flags=re.IGNORECASE)
+    
+    # Remove script and style tags and their content
+    content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    
+    # Replace common HTML entities
+    content = content.replace('&nbsp;', ' ')
+    content = content.replace('&amp;', '&')
+    content = content.replace('&lt;', '<')
+    content = content.replace('&gt;', '>')
+    content = content.replace('&quot;', '"')
+    content = content.replace('&#39;', "'")
+    
+    # Remove all remaining HTML tags
+    content = re.sub(r'<[^>]+>', '', content)
+    
+    # Clean up whitespace while preserving line breaks
+    content = re.sub(r' +', ' ', content)  # Multiple spaces to single space
+    content = re.sub(r'\n\s*\n', '\n\n', content)  # Multiple blank lines to double line break
+    content = content.strip()
+    
+    print(f"Cleaned content length: {len(content)}")
+    print("First 200 characters of cleaned content:")
+    print(content[:200])
+    
+    return content
+
 def process_news_content(content, title, article_date):
     """Process the news content and generate all necessary files."""
     try:
+        # Clean HTML tags from content
+        content = clean_html_tags(content)
+        
         # Save original content
         content_file = get_date_based_filename(article_date)
         with open(content_file, "w", encoding="utf-8") as f:
@@ -582,7 +609,7 @@ def process_news_content(content, title, article_date):
         print(f"Error processing news content: {str(e)}")
         return False
 
-def scrape_first_news_link(url: str):
+def scrape_first_news_link(url: str, force_refresh: bool = False):
     """Scrape the first news link found on the page."""
     with sync_playwright() as p:
         try:
@@ -623,7 +650,7 @@ def scrape_first_news_link(url: str):
                 
                 # Check if content already exists for this date
                 content_file = get_date_based_filename(article_date)
-                if os.path.exists(content_file):
+                if os.path.exists(content_file) and not force_refresh:
                     print(f"Content already exists for {article_date}")
                     browser.close()
                     return True
@@ -640,7 +667,7 @@ def scrape_first_news_link(url: str):
                 print(f"Page title: {title}")
                 
                 # Close browser before processing content
-            browser.close()
+                browser.close()
                 
                 # Process the content
                 return process_news_content(content, title, article_date)
@@ -670,15 +697,27 @@ def generate_audio_for_articles(date=None):
         # Get all markdown files in the article folder
         article_files = [f for f in os.listdir(article_folder) if f.endswith('.md')]
         
+        files = get_files_from_supabase(f"{date_str}/audio")
+        
         # Process all articles
         for article_file in article_files:
             article_path = os.path.join(article_folder, article_file)
             audio_file = article_path.replace('.md', '.mp3')
             
-            # Skip if audio file already exists
-            if os.path.exists(audio_file):
-                print(f"Audio file already exists for {article_file}")
-                continue
+                
+            audio_filename = os.path.basename(audio_file)
+            print(f"Precessing audio file {audio_filename}...")
+            # Skip if audio file already exists in Supabase
+            try:
+                # List files in the audio directory
+                file_exists = any(f['name'] == audio_filename for f in files)
+                
+                if file_exists:
+                    print(f"Audio file already exists in Supabase for {article_file}")
+                    continue
+            except Exception as e:
+                # If the directory doesn't exist or there's an error, proceed with generation
+                print(f"Error checking audio file on Supabase: {str(e)}")
             
             # Read the article content
             with open(article_path, 'r', encoding='utf-8') as f:
@@ -695,6 +734,27 @@ def generate_audio_for_articles(date=None):
                 # Generate audio using the library with the output_path parameter
                 generate(content, output_path=audio_file)
                 print(f"Successfully generated audio for {article_file}")
+                
+                # Read the generated audio file
+                with open(audio_file, 'rb') as f:
+                    audio_data = f.read()
+                
+                # Upload to Supabase
+                success, url = upload_content_to_supabase(
+                    date_str=date_str,
+                    content_type="audio",
+                    filename=audio_filename,
+                    content=audio_data,
+                    is_binary=True
+                )
+                
+                if success:
+                    print(f"Successfully uploaded audio for {article_file}")
+                    print(f"Audio URL: {url}")
+                else:
+                    print(f"Failed to upload audio for {article_file}")
+                
+                
             except Exception as e:
                 print(f"Failed to generate audio for {article_file}: {e}")
         
@@ -705,158 +765,53 @@ def generate_audio_for_articles(date=None):
         return False
 
 def generate_headlines_html(date=None):
-    """Generate a static HTML page with headlines and links to article folders."""
+    """Generate HTML file with headlines and upload to Supabase."""
     if date is None:
         date = datetime.now()
+    
     date_str = date.strftime("%Y-%m-%d")
+    folder_name = get_article_folder_name(date)
     
-    # Read the headlines file
-    headlines_file = f"{date_str}-headlines.md"  # Updated to match the actual file format
-    if not file_exists(headlines_file):
-        print(f"Headlines file {headlines_file} not found.")
-        return False
+    # Get all markdown files in the folder
+    markdown_files = [f for f in os.listdir(folder_name) if f.endswith('.md')]
     
-    try:
-        with open(headlines_file, 'r', encoding='utf-8') as f:
-            headlines = f.read().split('\n')
-        
-        # Create HTML content
-        html_content = f"""<!DOCTYPE html>
-<html lang="en">
+    # Create HTML content
+    html_content = f"""<!DOCTYPE html>
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>News Headlines - {date_str}</title>
     <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            line-height: 1.6;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }}
-        h1 {{
-            color: #333;
-            text-align: center;
-            margin-bottom: 30px;
-        }}
-        .headlines-list {{
-            list-style: none;
-            padding: 0;
-        }}
-        .headline-item {{
-            background: white;
-            margin-bottom: 15px;
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: transform 0.2s ease;
-        }}
-        .headline-item:hover {{
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }}
-        .headline-link {{
-            color: #2c3e50;
-            text-decoration: none;
-            display: block;
-        }}
-        .headline-link:hover {{
-            color: #3498db;
-        }}
-        .date {{
-            color: #666;
-            font-size: 0.9em;
-            margin-bottom: 20px;
-            text-align: center;
-        }}
-        .article-preview {{
-            display: none;
-            margin-top: 10px;
-            padding: 10px;
-            background: #f8f9fa;
-            border-radius: 4px;
-            font-size: 0.9em;
-        }}
-        .headline-item:hover .article-preview {{
-            display: block;
-        }}
-        .audio-link {{
-            display: inline-block;
-            margin-top: 10px;
-            padding: 5px 10px;
-            background-color: #3498db;
-            color: white;
-            text-decoration: none;
-            border-radius: 4px;
-            font-size: 0.9em;
-        }}
-        .audio-link:hover {{
-            background-color: #2980b9;
-        }}
-        .audio-icon {{
-            margin-right: 5px;
-        }}
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .headline {{ margin: 10px 0; padding: 10px; border-bottom: 1px solid #eee; }}
     </style>
 </head>
 <body>
-    <h1>News Headlines</h1>
-    <div class="date">{date_str}</div>
-    <ul class="headlines-list">
-"""
+    <h1>News Headlines - {date_str}</h1>"""
+    
+    for md_file in markdown_files:
+        # Read the first line of each markdown file as the headline
+        with open(os.path.join(folder_name, md_file), 'r') as f:
+            headline = f.readline().strip('# \n')
         
-        # Add each headline with a link to its article folder
-        for headline in headlines:
-            if headline.strip():
-                # Create a filename-friendly version of the headline
-                filename = re.sub(r'[^\w\s-]', '', headline)
-                filename = re.sub(r'[-\s]+', '_', filename)
-                article_path = f"{date_str}-article/{filename}.md"
-                audio_path = f"{date_str}-article/{filename}.mp3"
-                
-                # Try to read the first few lines of the article for preview
-                preview_text = ""
-                try:
-                    if file_exists(article_path):
-                        with open(article_path, 'r', encoding='utf-8') as f:
-                            # Skip the title and get the first paragraph
-                            lines = f.readlines()
-                            for line in lines[2:]:  # Skip title and blank line
-                                if line.strip():
-                                    preview_text = line.strip()[:200] + "..."
-                                    break
-                except Exception:
-                    pass
-                
-                # Add audio link if the audio file exists
-                audio_link = ""
-                if file_exists(audio_path):
-                    audio_link = f"""
-            <a href="{audio_path}" class="audio-link">
-                <span class="audio-icon">🔊</span>Listen to Article
-            </a>"""
-                
-                html_content += f"""        <li class="headline-item">
-            <a href="{article_path}" class="headline-link">{headline}</a>
-            <div class="article-preview">{preview_text}</div>{audio_link}
-        </li>
-"""
-        
-        html_content += """    </ul>
+        html_content += f"""
+    <div class="headline">
+        <h2>{headline}</h2>
+        <a href="/api/content/{date_str}/article/{md_file}">Read more</a>
+        <a href="/api/content/{date_str}/audio/{md_file.replace('.md', '.mp3')}">Listen to audio</a>
+    </div>"""
+    
+    html_content += """
 </body>
 </html>"""
-        
-        # Save the HTML file
-        html_file = f"{date_str}-headlines.html"
-        with open(html_file, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        print(f"\nHTML page saved to: {html_file}")
-        return True
-        
-    except Exception as e:
-        print(f"Error generating HTML page: {e}")
-        return False
+    
+    # Save and upload the HTML file
+    html_filename = f"{date_str}-headlines.html"
+    success = save_content_to_file(html_content, html_filename)
+    
+    if success:
+        print(f"Successfully generated and uploaded headlines HTML for {date_str}")
+    else:
+        print(f"Failed to generate or upload headlines HTML for {date_str}")
 
 def main():
     """Main function to run the scraper."""
@@ -867,10 +822,11 @@ def main():
         print("Testing API functionality...")
         api_test_success = test_api_functionality()
         if not api_test_success:
-            print("API test failed. Continuing with local file generation only.")
+            print("API test failed. Exiting script.")
+            return
         
-        # Scrape the first news link
-        result = scrape_first_news_link("https://news.iliane.xyz/briefs")
+        # Scrape the first news link with force_refresh=True
+        result = scrape_first_news_link("https://news.iliane.xyz/briefs", force_refresh=True)
         if result:
             print("Script finished successfully.")
         else:

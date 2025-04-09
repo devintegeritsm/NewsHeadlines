@@ -27,12 +27,11 @@ CORS(app)  # Enable CORS for all routes
 # Supabase Configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 # Validate environment variables
-if not all([SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_KEY]):
+if not all([SUPABASE_URL, SUPABASE_KEY]):
     logger.error("Missing required environment variables. Please check your .env file.")
-    for var in ['SUPABASE_URL', 'SUPABASE_KEY', 'SUPABASE_SERVICE_KEY']:
+    for var in ['SUPABASE_URL', 'SUPABASE_KEY']:
         if not os.getenv(var):
             logger.error(f"Missing {var}")
     raise ValueError("Missing required environment variables")
@@ -42,7 +41,8 @@ logger.info("Initializing Supabase client...")
 
 try:
     # Initialize Supabase client with admin privileges for full access
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    # supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     logger.info("Successfully initialized Supabase client with admin privileges")
     
     # Test the connection by making a simple query

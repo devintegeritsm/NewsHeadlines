@@ -28,9 +28,15 @@
             display: none;
             margin-top: 1rem;
             width: 100%;
+            min-height: 40px;
+            max-width: 100%;
+            min-width: 400px;
+            border-radius: 4px;
+            background-color: #f3f4f6;
+            padding: 8px;
         }
         .audio-player.visible {
-            display: block;
+            display: block !important;
         }
         #article-iframe-container {
             position: fixed;
@@ -127,7 +133,7 @@
             }
         }
 
-        async function playAudio(audioUrl, headlineCard) {
+        async function playAudio(audioUrl, container) {
             try {
                 console.log('Fetching audio URL from:', audioUrl);
                 const response = await fetch(audioUrl);
@@ -136,9 +142,15 @@
                 
                 if (data.success && data.url) {
                     // Remove any existing audio player
-                    const existingPlayer = headlineCard.querySelector('.audio-player');
+                    // const existingPlayer = container.querySelector('audio.audio-player');
+                    const existingPlayer = document.querySelector('audio.audio-player.visible');
                     if (existingPlayer) {
+                        console.log('Removing existing audio player');
+                        const existingContainer = existingPlayer.closest('.audio-player-container');
                         existingPlayer.remove();
+                        if (existingContainer) {
+                            existingContainer.remove();
+                        }
                     }
                     
                     // Create new audio player
@@ -173,7 +185,7 @@
                     });
                     
                     // Append the audio player to the headline card
-                    headlineCard.appendChild(audioPlayer);
+                    container.appendChild(audioPlayer);
                     
                 } else {
                     console.error('Failed to get audio URL:', data);

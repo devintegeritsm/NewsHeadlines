@@ -11,7 +11,7 @@ import soundfile as sf
 import numpy as np
 from f5_tts_mlx.generate import generate
 import base64
-from supabase_api import get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
+from supabase_api import delete_headlines_from_supabase, get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
 from bs4 import BeautifulSoup
 import supabase
 from supabase import create_client
@@ -355,55 +355,24 @@ def format_content_with_headlines(content, title, filtered_headlines):
     
     return markdown
 
-def save_content_to_file(content, filename):
+def upload_headlines(content, filename, date_str):
     """Save content to a file and upload to Supabase."""
     try:
-        # Extract date from filename or parent folder
-        if filename.endswith('.mp3'):
-            # For audio files, get the date from the parent folder name (YYYY-MM-DD-article)
-            parent_folder = os.path.dirname(filename)
-            if parent_folder and '-article' in parent_folder:
-                date_str = parent_folder.split('-article')[0]
-            else:
-                date_str = datetime.now().strftime("%Y-%m-%d")
-        else:
-            # For other files, extract from filename (format: YYYY-MM-DD-*.ext)
-            date_parts = filename.split('-')
-            if len(date_parts) >= 3 and all(part.isdigit() for part in date_parts[:3]):
-                date_str = '-'.join(date_parts[:3])
-            else:
-                date_str = datetime.now().strftime("%Y-%m-%d")
+        # Save content to a file
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f"Content saved to: {filename}")
         
-        # Determine content type from filename
-        if 'headlines' in filename:
-            content_type = 'headlines'
-        elif filename.endswith('.mp3'):
-            content_type = 'audio'
-        else:
-            content_type = 'article'
-        
-        # For article files, check if they exist in Supabase before uploading
-        if content_type == 'article':
-            try:
-                # List files in the article directory
-                files = supabase.storage.from_("content").list(f"{date_str}/article")
-                file_exists = any(f['name'] == filename for f in files)
-                
-                if file_exists:
-                    print(f"Article file {filename} already exists in Supabase. Skipping upload.")
-                    return True
-            except Exception as e:
-                print(f"Error checking if article exists in Supabase: {e}")
-                # Continue with upload if check fails
+        # Clean supabase table
+        delete_headlines_from_supabase(date_str)
         
         # Upload to Supabase
         try:
             success, url = upload_content_to_supabase(
                 date_str=date_str,
-                content_type=content_type,
+                content_type='headlines',
                 filename=filename,
-                content=content,
-                is_binary=filename.endswith('.mp3')
+                content=content
             )
             
             if success:
@@ -414,15 +383,11 @@ def save_content_to_file(content, filename):
                 return False
                 
         except Exception as upload_error:
-            if "Duplicate" in str(upload_error):
-                print(f"File {filename} already exists in Supabase. Skipping upload.")
-                return True  # Consider it a success since the file exists
-            else:
-                print(f"Error uploading to Supabase: {upload_error}")
-                return False
+            print(f"Error uploading to Supabase: {upload_error}")
+            return False
             
     except Exception as e:
-        print(f"Error saving content to Supabase: {e}")
+        print(f"Error saving content: {e}")
         return False
 
 def split_content_by_topics(content, headlines, article_folder):
@@ -541,7 +506,7 @@ def clean_html_tags(content):
     
     return content
 
-def process_news_content(content, title, article_date):
+def process_news_content(content, article_date):
     """Process the news content and generate all necessary files."""
     try:
         # Clean HTML tags from content
@@ -670,7 +635,7 @@ def scrape_first_news_link(url: str, force_refresh: bool = False):
                 browser.close()
                 
                 # Process the content
-                return process_news_content(content, title, article_date)
+                return process_news_content(content, article_date)
             else:
                 print("No news links found on the page.")
                 browser.close()
@@ -698,7 +663,7 @@ def generate_audio_for_articles(date=None):
         article_files = [f for f in os.listdir(article_folder) if f.endswith('.md')]
         
         files = get_files_from_supabase(f"{date_str}/audio")
-        
+
         # Process all articles
         for article_file in article_files:
             article_path = os.path.join(article_folder, article_file)
@@ -806,7 +771,7 @@ def generate_headlines_html(date=None):
     
     # Save and upload the HTML file
     html_filename = f"{date_str}-headlines.html"
-    success = save_content_to_file(html_content, html_filename)
+    success = upload_headlines(html_content, html_filename, date_str)
     
     if success:
         print(f"Successfully generated and uploaded headlines HTML for {date_str}")

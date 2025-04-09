@@ -126,7 +126,7 @@ def upload_content_to_supabase(date_str: str, content_type: str, filename: str, 
                 storage_response = supabase_admin.storage.from_("content").upload(
                     path=storage_path,
                     file=file,
-                    file_options={"content-type": "text/plain" if not is_binary else "audio/mpeg"}
+                    file_options={"x-upsert": "true", "content-type": "text/plain" if not is_binary else "audio/mpeg"}
                 )
             
             # Get the public URL using admin client
@@ -322,10 +322,24 @@ def get_headlines_from_supabase():
         print(f"Error getting headlines from Supabase: {str(e)}")
         return []
     
+def delete_headlines_from_supabase(date_str: str):
+    """Delete all headlines from the content table on Supabase for a specific date."""
+    try:
+        supabase_admin.table("content") \
+            .delete() \
+            .eq("content_type", "headlines") \
+            .eq("date", date_str) \
+            .execute()
+        print(f"Headlines have been deleted for date: {date_str}")
+    except Exception as e:
+        print(f"Error deleting headlines from Supabase: {str(e)}")
+    
+    
 if __name__ == "__main__":
     print("Starting Supabase test...")
     # test_supabase_functionality()
     # upload_specific_audio_file()
     # list_files_in_supabase()
-    get_headlines_from_supabase()
+    # get_headlines_from_supabase()
+    delete_headlines_from_supabase("2025-04-09")
     print("Supabase test completed.") 

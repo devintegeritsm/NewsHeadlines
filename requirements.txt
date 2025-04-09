@@ -1,6 +1,8 @@
 flask==3.0.2
 python-dotenv==1.0.1
-supabase==2.3.0
+supabase-py==1.0.3
 requests==2.31.0
 flask-cors==4.0.0
-gunicorn==21.2.0 
+gunicorn==21.2.0
+postgrest==0.10.3
+httpx==0.24.1 

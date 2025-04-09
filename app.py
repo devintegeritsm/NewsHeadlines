@@ -218,23 +218,7 @@ def get_content(date, content_type, filename):
             'error': str(e)
         }), 500
 
-def find_available_port(start_port=5000, max_port=5050):
-    """Find an available port to run the Flask app."""
-    for port in range(start_port, max_port + 1):
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(('0.0.0.0', port))
-                return port
-        except OSError:
-            continue
-    raise OSError(f"No available ports found between {start_port} and {max_port}")
-
 if __name__ == '__main__':
-    try:
-        port = find_available_port()
-        logger.info(f"Starting Flask application on port {port}")
-        app.run(debug=True, host='0.0.0.0', port=port)
-    except Exception as e:
-        logger.error(f"Failed to start Flask application: {str(e)}")
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise 
+    port = int(os.environ.get('PORT', 10000))
+    logger.info(f"Starting Flask application on port {port}")
+    app.run(host='0.0.0.0', port=port) 

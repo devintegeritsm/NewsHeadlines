@@ -1,0 +1,244 @@
+from playwright.sync_api import sync_playwright
+import json
+import os
+import re
+from dotenv import load_dotenv
+import google.generativeai as genai
+from urllib.parse import urlparse
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure the Gemini API
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+USE_GEMINI = GOOGLE_API_KEY is not None
+
+if USE_GEMINI:
+    try:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        # Set up the model
+        model = genai.GenerativeModel('gemini-1.5-pro')
+        print("Gemini API configured successfully")
+    except Exception as e:
+        print(f"Error configuring Gemini API: {e}")
+        USE_GEMINI = False
+        print("Falling back to local formatting")
+
+def filter_and_format_with_gemini(content, title):
+    """
+    Use Gemini to filter out sports content and format the output as markdown.
+    """
+    prompt = f"""
+    You are a content filter and formatter. Your task is to:
+    
+    1. Filter out any sports-related content from the following news article
+    2. Format the remaining content as a clean, well-structured markdown document
+    
+    The article title is: "{title}"
+    
+    Here's the content to process:
+    {content}
+    
+    Please return ONLY the formatted markdown content. Do not include any explanations or notes.
+    The markdown should have:
+    - A clear title (using #)
+    - Well-formatted sections (using ## for section headers)
+    - Proper paragraph breaks
+    - Any relevant lists or quotes formatted appropriately
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"Error calling Gemini API: {e}")
+        return None
+
+def format_content_locally(content, title):
+    """
+    Format the content as markdown without using Gemini API.
+    """
+    # Clean up the title
+    clean_title = title.split('|')[0].strip()
+    
+    # Start with the title
+    markdown = f"# {clean_title}\n\n"
+    
+    # Split content into paragraphs
+    paragraphs = content.split('\n')
+    
+    # Process each paragraph
+    for paragraph in paragraphs:
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+            
+        # Skip sports-related content
+        sports_keywords = ['sport', 'football', 'soccer', 'basketball', 'baseball', 'tennis', 'golf', 'olympics', 'championship', 'tournament', 'league', 'team', 'player', 'coach', 'score', 'game', 'match', 'win', 'loss', 'victory', 'defeat']
+        if any(keyword in paragraph.lower() for keyword in sports_keywords):
+            continue
+            
+        # Check if this is a section header (all caps or ends with colon)
+        if paragraph.isupper() or paragraph.endswith(':'):
+            markdown += f"## {paragraph}\n\n"
+        else:
+            markdown += f"{paragraph}\n\n"
+    
+    return markdown
+
+def scrape_first_news_link(url: str):
+    """
+    Scrapes the first news link from the page and its content.
+    """
+    print(f"Attempting to scrape: {url}")
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True, timeout=60000)
+            page = browser.new_page()
+            print("Navigating to page...")
+            
+            # Navigate to the page
+            page.goto(url, wait_until='networkidle', timeout=60000)
+            print("Page loaded, waiting for additional rendering...")
+            
+            # Give more time for JS rendering
+            page.wait_for_timeout(5000)
+            print("Looking for the first news link...")
+            
+            # Find the first news link on the page
+            first_link = page.evaluate("""
+                () => {
+                    // Get all links
+                    const links = Array.from(document.querySelectorAll('a[href]'));
+                    
+                    // Filter out navigation links and find the first news link
+                    const newsLink = links.find(link => {
+                        const href = link.href;
+                        const text = link.textContent.trim().toLowerCase();
+                        
+                        // Skip navigation links
+                        if (href.endsWith('/') || 
+                            href.includes('/home') || 
+                            href.includes('/about') || 
+                            text === 'home' || 
+                            text === 'about' ||
+                            text === 'briefs') {
+                            return false;
+                        }
+                        
+                        // Look for links that might be news entries
+                        // They often have longer text or are in specific containers
+                        const parent = link.closest('article, .article, .post, .entry, .brief, .news-item');
+                        return parent !== null || text.length > 20;
+                    });
+                    
+                    if (newsLink) {
+                        return {
+                            href: newsLink.href,
+                            text: newsLink.textContent.trim()
+                        };
+                    }
+                    return null;
+                }
+            """)
+            
+            if not first_link:
+                print("No news links found on the page.")
+                browser.close()
+                return None
+                
+            print(f"Found first news link: {first_link['href']}")
+            print(f"Link text: {first_link['text']}")
+            
+            # Navigate to the first link
+            print(f"Navigating to the first news link: {first_link['href']}")
+            page.goto(first_link['href'], wait_until='networkidle', timeout=60000)
+            print("Link page loaded, waiting for additional rendering...")
+            
+            # Give more time for JS rendering
+            page.wait_for_timeout(5000)
+            
+            # Get the content of the linked page
+            content = page.content()
+            print(f"Got content from linked page (length: {len(content)})")
+            
+            # Extract title and main content
+            title = page.title()
+            print(f"Page title: {title}")
+            
+            # Try to extract the main content
+            main_content = page.evaluate("""
+                () => {
+                    // Try to find the main content
+                    const mainContent = document.querySelector('main, article, .content, .article, .post, .brief');
+                    if (mainContent) {
+                        return mainContent.textContent.trim();
+                    }
+                    
+                    // If no main content found, get the body text
+                    return document.body.textContent.trim();
+                }
+            """)
+            
+            browser.close()
+            
+            # Process the content
+            formatted_content = None
+            
+            if USE_GEMINI:
+                print("Processing content with Gemini...")
+                formatted_content = filter_and_format_with_gemini(main_content, title)
+                
+                if formatted_content:
+                    print("Content successfully processed with Gemini")
+                else:
+                    print("Failed to process content with Gemini, using local formatting")
+            
+            # If Gemini failed or is not available, use local formatting
+            if not formatted_content:
+                print("Using local formatting...")
+                formatted_content = format_content_locally(main_content, title)
+            
+            return {
+                'original_page': url,
+                'link_url': first_link['href'],
+                'link_text': first_link['text'],
+                'page_title': title,
+                'formatted_content': formatted_content
+            }
+            
+        except Exception as e:
+            print(f"Error during scraping: {type(e).__name__} - {e}")
+            return None
+
+if __name__ == "__main__":
+    target_url = "https://news.iliane.xyz/briefs"
+    print("Starting script...")
+    scraped_data = scrape_first_news_link(target_url)
+    
+    if scraped_data:
+        print("\n--- Final Output ---")
+        # Print the markdown content directly
+        print(scraped_data['formatted_content'])
+        
+        # Get the last part of the URL to use as filename
+        parsed_url = urlparse(scraped_data['link_url'])
+        filename = parsed_url.path.strip('/').split('/')[-1]
+        if not filename:  # If URL ends with /, use the second to last part
+            filename = parsed_url.path.strip('/').split('/')[-2]
+        
+        # Clean the filename and ensure it ends with .md
+        filename = re.sub(r'[^\w\-_.]', '_', filename)  # Replace invalid chars with underscore
+        if not filename.endswith('.md'):
+            filename += '.md'
+            
+        # Save the content to a file
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write(scraped_data['formatted_content'])
+            print(f"\nContent saved to: {filename}")
+        except Exception as e:
+            print(f"\nError saving content to file: {e}")
+    else:
+        print("Failed to scrape the data.")
+    print("Script finished.")

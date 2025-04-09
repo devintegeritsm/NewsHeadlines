@@ -1,0 +1,125 @@
+from playwright.sync_api import sync_playwright
+import google.generativeai as genai
+import json
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Configure the Gemini API
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable is not set. Please create a .env file with your API key.")
+
+genai.configure(api_key=GOOGLE_API_KEY)
+
+# Set up the model
+model = genai.GenerativeModel('gemini-2.5-pro-exp-03-05')
+
+def analyze_link_with_gemini(link):
+    """
+    Use Gemini to analyze a link and extract the most recent news entry.
+    """
+    prompt = f"""
+    Analyze this link and extract the most recent news entry link.
+    """
+
+def analyze_with_gemini(html_content):
+    """
+    Use Gemini to analyze the HTML content and extract the most recent news entry.
+    """
+    prompt = f"""
+    Analyze this HTML content from a news website and extract the most recent news entry.
+    The content is from a page that displays news briefs or articles.
+    
+    Please identify the most recent entry and extract:
+    1. The title
+    2. A brief summary (if available)
+    3. The source link (if available)
+    4. The date (if available)
+    
+    Return the information in JSON format with these keys:
+    - title: The title of the news entry
+    - summary: A brief summary of the content
+    - link: The source link
+    - date: The date of the entry (if available)
+    
+    HTML Content:
+    {html_content[:10000]}  # Limit content length to avoid token limits
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        response_text = response.text
+        
+        # Try to extract JSON from the response
+        try:
+            # Look for JSON in the response
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                json_str = response_text[json_start:json_end]
+                result = json.loads(json_str)
+                return result
+            else:
+                print("No JSON found in response. Raw response:")
+                print(response_text)
+                return None
+        except json.JSONDecodeError:
+            print("Failed to parse JSON from response. Raw response:")
+            print(response_text)
+            return None
+            
+    except Exception as e:
+        print(f"Error calling Gemini API: {e}")
+        return None
+
+def scrape_most_recent_brief(url: str):
+    """
+    Scrapes the most recent brief entry from a JS-rendered page using Gemini for analysis.
+    """
+    print(f"Attempting to scrape: {url}")
+    with sync_playwright() as p:
+        try:
+            browser = p.chromium.launch(headless=True, timeout=60000)
+            page = browser.new_page()
+            print("Navigating to page...")
+            
+            # Try with a longer timeout and wait for network idle
+            page.goto(url, wait_until='networkidle', timeout=60000)
+            print("Page loaded, waiting for additional rendering...")
+            
+            # Give more time for JS rendering
+            page.wait_for_timeout(10000)
+            print("Getting page content...")
+            
+            html_content = page.content()
+            print(f"Got HTML content (length: {len(html_content)})")
+            browser.close()
+            
+        except Exception as e:
+            print(f"Error during Playwright operation: {type(e).__name__} - {e}")
+            return None
+        
+        print("Analyzing content with Gemini...")
+        result = analyze_with_gemini(html_content)
+        
+        if result:
+            print("Successfully extracted information with Gemini")
+            return result
+        else:
+            print("Failed to extract information with Gemini.")
+            return None
+
+if __name__ == "__main__":
+    target_url = "https://news.iliane.xyz/briefs"
+    print("Starting script...")
+    scraped_data = scrape_most_recent_brief(target_url)
+    
+    if scraped_data:
+        print("\n--- Final Output ---")
+        print(json.dumps(scraped_data, indent=2))
+    else:
+        print("Failed to scrape the data.")
+    print("Script finished.")

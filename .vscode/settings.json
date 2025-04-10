@@ -1,0 +1,5 @@
+{
+    "python.terminal.activateEnvironment": true,
+    // This line below is automatically added when you select the interpreter for the workspace
+    "python.defaultInterpreterPath": "~/projects/py310/.venv/bin/python" // Or the absolute path VS Code saved
+}

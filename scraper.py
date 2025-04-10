@@ -9,12 +9,13 @@ from datetime import datetime
 import time
 import soundfile as sf
 import numpy as np
-from f5_tts_mlx.generate import generate
+# from f5_tts_mlx.generate import generate
 import base64
 from supabase_api import delete_headlines_from_supabase, get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
 from bs4 import BeautifulSoup
 import supabase
 from supabase import create_client
+from kokoro_api import generate_audio
 
 # Load environment variables from .env file
 load_dotenv()
@@ -23,15 +24,61 @@ load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Configure the custom AI API
+# ENABLE_FILTERING_WITH_CUSTOM_AI = True
+ENABLE_FILTERING_WITH_CUSTOM_AI = False
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
-MODEL_NAME = "gemma-3-12b-it"
+MODEL_NAME = "deepseek-r1-distill-qwen-7b"
 AI_TIMEOUT = 300  # 5 minutes timeout (increased from 3 minutes)
 AI_CHUNK_SIZE = 8192  # Buffer size for reading response
 
+# TTS_PROVIDER = "f5"
+# TTS_OUTPUT_FORMAT = ".mp3"
+
+TTS_PROVIDER = "kokoro"
+TTS_OUTPUT_FORMAT = ".wav"
+
+# Function to check API availability and get available models
+def check_api_availability():
+    """Check if the API is available and get available models."""
+    print(f"Checking API availability at {CUSTOM_AI_ENDPOINT}...")
+    
+    try:
+        response = requests.get(f"{CUSTOM_AI_ENDPOINT}/v1/models", timeout=10)
+        
+        if response.status_code == 200:
+            models_data = response.json()
+            if 'data' in models_data and len(models_data['data']) > 0:
+                # Get the first model from the list
+                first_model = models_data['data'][0]['id']
+                print(f"API is available. First available model: {first_model}")
+                return True, first_model
+            else:
+                print("API is available but no models found.")
+                return True, None
+        else:
+            print(f"API check failed with status code: {response.status_code}")
+            return False, None
+    except Exception as e:
+        print(f"API availability check failed with error: {str(e)}")
+        return False, None
+
 # Function to test the API functionality
 def test_api_functionality():
-    """Test the API functionality by checking if the content bucket exists."""
+    """Test the API functionality by checking if it's available and content bucket exists."""
     print("Testing API functionality...")
+    
+    # Check API availability and get models
+    api_available, first_model = check_api_availability()
+    if not api_available:
+        print("API is not available. Exiting...")
+        return False
+    
+    # Update MODEL_NAME with the first available model if found
+    # if first_model:
+    #     global MODEL_NAME
+    #     MODEL_NAME = first_model
+
+    print(f"Using model: {MODEL_NAME}")
     
     try:
         # Check if content bucket exists
@@ -528,16 +575,6 @@ def process_news_content(content, article_date):
             f.write("\n".join(headlines))
         print(f"Headlines saved to: {headlines_file}")
 
-        # Filter headlines with custom AI
-        print("Filtering headlines with custom AI...")
-        try:
-            filtered_headlines = filter_headlines_with_custom_ai(headlines)
-            print(f"Successfully filtered headlines. Kept {len(filtered_headlines)} headlines.")
-        except Exception as e:
-            print(f"Failed to filter headlines with custom AI: {str(e)}")
-            print("Using original headlines as fallback...")
-            filtered_headlines = headlines
-
         # Create article folder and split content
         article_folder = get_date_based_filename(article_date, "article", "")
         os.makedirs(article_folder, exist_ok=True)
@@ -545,19 +582,46 @@ def process_news_content(content, article_date):
 
         print("Splitting content by topics...")
         try:
-            split_content_by_topics(content, filtered_headlines, article_folder)
+            split_content_by_topics(content, headlines, article_folder)
             print("Content split successfully.")
-
-            # Save topic files for reference
-            topic_files = save_topic_files(filtered_headlines, article_folder)
-            print(f"Created {len(topic_files)} article files.")
         except Exception as e:
             print(f"Error splitting content: {str(e)}")
             return False
 
-        # Generate audio files
+        if ENABLE_FILTERING_WITH_CUSTOM_AI:
+            # Filter articles with custom AI
+            article_files = [f for f in os.listdir(article_folder) if f.endswith('.md')]
+            filtered_article_files = []
+
+            print(f"Filtering {len(article_files)} articles with custom AI...")
+            for article_file in article_files:
+                article_path = os.path.join(article_folder, article_file)
+                
+                # Read article content
+                with open(article_path, 'r', encoding='utf-8') as f:
+                    article_content = f.read()
+                
+                # Filter article
+                should_exclude = filter_article_with_custom_ai(article_content)
+                
+                if should_exclude:
+                    print(f"Excluding article: {article_file} (matches exclusion criteria)")
+                    # Remove the file as it's excluded
+                    os.remove(article_path)
+                else:
+                    print(f"Keeping article: {article_file}")
+                    filtered_article_files.append(article_file)
+            
+            print(f"Filtered articles. Kept {len(filtered_article_files)} out of {len(article_files)} articles.")
+        
+            # If all articles were filtered out, return early
+            if not filtered_article_files:
+                print("All articles were filtered out. Nothing to process further.")
+                return True
+
+        # Generate audio files for filtered articles
         try:
-            generate_audio_for_articles(article_date)
+            generate_audio_for_articles(article_date, TTS_PROVIDER)
             print("Audio files generated successfully.")
         except Exception as e:
             print(f"Error generating audio files: {str(e)}")
@@ -573,6 +637,87 @@ def process_news_content(content, article_date):
     except Exception as e:
         print(f"Error processing news content: {str(e)}")
         return False
+
+def filter_article_with_custom_ai(article_content):
+    """
+    Use custom AI API to check if article content is related to sports, pro-vaccination info,
+    or criminal violence in non-war zones.
+    
+    Returns True if article should be excluded (AI answered "yes"), False otherwise.
+    """
+    print("Checking article content with custom AI...")
+
+    prompt = f"""
+    You are a content filter that checks if articles are related to any kind of sports or pro-vaccination. 
+    Answer only YES or NO like the following: ANSWER:YES or ANSWER:NO
+    
+    Here the content to review:
+    {article_content}    
+    """
+    
+    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
+    print(f"Using model: {MODEL_NAME}")
+    
+    try:
+        print("Sending request to custom AI API...")
+        start_time = time.time()
+        
+        # Use a session for better connection handling
+        with requests.Session() as session:
+            # Set a longer timeout for the connection and read operations
+            session.mount('http://', requests.adapters.HTTPAdapter(
+                max_retries=3,
+                pool_connections=10,
+                pool_maxsize=10
+            ))
+            
+            # Send the request with streaming enabled
+            response = session.post(
+                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
+                json={
+                    "model": MODEL_NAME,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,  # Lower temperature for more deterministic answers
+                    "max_tokens": -1
+                },
+                timeout=AI_TIMEOUT,
+                stream=True  # Enable streaming to handle large responses
+            )
+            
+            # Check if the request was successful
+            response.raise_for_status()
+            
+            # Read the response in chunks
+            print("Reading response from custom AI API...")
+            response_content = ""
+            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
+                if chunk:
+                    response_content += chunk
+            
+            elapsed_time = time.time() - start_time
+            print(f"Received response from custom AI API in {elapsed_time:.2f} seconds")
+            
+            # Parse the response
+            result = json.loads(response_content)
+            
+            if 'choices' in result and len(result['choices']) > 0:
+                answer_raw = result['choices'][0]['message']['content'].strip()
+                print(f"AI raw response: {answer_raw}")
+                answer = answer_raw.split("ANSWER:")[1].strip()
+                print(f"AI response: {answer}")
+                
+                # Return True if the answer is YES (exclude the article)
+                return "YES" in answer
+            else:
+                print("Error: Unexpected response format from custom AI API")
+                print(f"Response: {json.dumps(result, indent=2)}")
+                return False  # Keep the article if there's an error
+                
+    except Exception as e:
+        print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
+        return False  # Keep the article if there's an error
 
 def scrape_first_news_link(url: str, force_refresh: bool = False):
     """Scrape the first news link found on the page."""
@@ -647,11 +792,12 @@ def scrape_first_news_link(url: str, force_refresh: bool = False):
                 browser.close()
             return False
 
-def generate_audio_for_articles(date=None):
+def generate_audio_for_articles(date, provider: str):
     """Generate audio files for each article using f5-tts-mlx."""
-    if date is None:
-        date = datetime.now()
-    date_str = date.strftime("%Y-%m-%d")
+    if isinstance(date, str):
+        date_str = date
+    else:
+        date_str = date.strftime("%Y-%m-%d")
     article_folder = f"{date_str}-article"
     
     if not os.path.exists(article_folder):
@@ -665,10 +811,10 @@ def generate_audio_for_articles(date=None):
         files = get_files_from_supabase(f"{date_str}/audio")
 
         # Process all articles
+        # for article_file in article_files[:5]:
         for article_file in article_files:
             article_path = os.path.join(article_folder, article_file)
-            audio_file = article_path.replace('.md', '.mp3')
-            
+            audio_file = article_path.replace('.md', TTS_OUTPUT_FORMAT)
                 
             audio_filename = os.path.basename(audio_file)
             print(f"Precessing audio file {audio_filename}...")
@@ -696,8 +842,13 @@ def generate_audio_for_articles(date=None):
             # Generate audio file using the f5-tts-mlx library directly
             print(f"Generating audio for {article_file}...")
             try:
-                # Generate audio using the library with the output_path parameter
-                generate(content, output_path=audio_file)
+                if provider == "f5":
+                    # Generate audio using the library with the output_path parameter
+                    # generate(content, output_path=audio_file)
+                    raise Exception("{provider} is not installed")
+                else:
+                    # Generate audio using the kokoro API
+                    generate_audio(content, audio_file)
                 print(f"Successfully generated audio for {article_file}")
                 
                 # Read the generated audio file
@@ -762,7 +913,7 @@ def generate_headlines_html(date=None):
     <div class="headline">
         <h2>{headline}</h2>
         <a href="/api/content/{date_str}/article/{md_file}">Read more</a>
-        <a href="/api/content/{date_str}/audio/{md_file.replace('.md', '.mp3')}">Listen to audio</a>
+        <a href="/api/content/{date_str}/audio/{md_file.replace('.md', TTS_OUTPUT_FORMAT)}">Listen to audio</a>
     </div>"""
     
     html_content += """

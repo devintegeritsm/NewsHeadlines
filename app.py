@@ -139,7 +139,7 @@ def get_content(date, content_type, filename):
         logger.info(f"Using filename: {actual_filename}")
         
         # Determine the correct content type
-        if filename.endswith('.mp3'):
+        if filename.endswith('.mp3') or filename.endswith('.wav'):
             actual_content_type = "audio"
         elif "article" in filename:
             actual_content_type = "article"
@@ -183,7 +183,7 @@ def get_content(date, content_type, filename):
                     }), 500
             
             # For audio files, return the URL directly
-            if actual_filename.endswith('.mp3'):
+            if actual_filename.endswith('.mp3') or actual_filename.endswith('.wav'):
                 return jsonify({
                     'success': True,
                     'url': url

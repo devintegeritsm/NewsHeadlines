@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="light-theme">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,8 +7,64 @@
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
+        :root {
+            --bg-primary: #f7fafc;
+            --bg-secondary: #ffffff;
+            --text-primary: #1a202c;
+            --text-secondary: #4a5568;
+            --text-muted: #718096;
+            --border-color: #e2e8f0;
+            --link-color: #4299e1;
+            --link-hover: #2b6cb0;
+            --shadow-color: rgba(0, 0, 0, 0.15);
+            --overlay-bg: rgba(0, 0, 0, 0.8);
+        }
+        
+        .dark-theme {
+            --bg-primary: #1a202c;
+            --bg-secondary: #2d3748;
+            --text-primary: #f7fafc;
+            --text-secondary: #e2e8f0;
+            --text-muted: #a0aec0;
+            --border-color: #4a5568;
+            --link-color: #63b3ed;
+            --link-hover: #90cdf4;
+            --shadow-color: rgba(0, 0, 0, 0.4);
+            --overlay-bg: rgba(0, 0, 0, 0.9);
+        }
+        
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+        }
+        
+        .theme-toggle {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            cursor: pointer;
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 9999px;
+            padding: 0.5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            box-shadow: 0 1px 3px var(--shadow-color);
+        }
+        
+        .theme-toggle:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 5px var(--shadow-color);
+        }
+        
         .headline-card {
             transition: transform 0.2s ease-in-out;
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            box-shadow: 0 4px 6px var(--shadow-color);
         }
         .headline-card:hover {
             transform: translateY(-5px);
@@ -24,47 +80,95 @@
                 opacity: .5;
             }
         }
-        .audio-player {
-            display: none;
+        .article-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.5s ease-out;
+        }
+        .article-list.visible {
+            max-height: 10000px;
             margin-top: 1rem;
-            width: 100%;
-            min-height: 40px;
-            max-width: 100%;
-            min-width: 400px;
-            border-radius: 4px;
-            background-color: #f3f4f6;
-            padding: 8px;
         }
-        .audio-player.visible {
-            display: block !important;
-        }
-        #article-iframe-container {
+        #article-container {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
             bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
+            background: var(--overlay-bg);
             z-index: 1000;
             display: none;
-            padding: 2rem;
+            overflow-y: auto;
         }
-        #article-iframe-container.visible {
-            display: flex;
-            flex-direction: column;
+        #article-container.visible {
+            display: block;
         }
-        #article-iframe {
-            flex: 1;
-            background: white;
+        .article-content {
+            background: var(--bg-secondary);
             border-radius: 0.5rem;
-            margin: 2rem;
-            border: none;
+            margin: 2rem auto;
+            max-width: 800px;
+            padding: 2rem;
+            position: relative;
+            box-shadow: 0 4px 20px var(--shadow-color);
         }
-        .close-iframe {
+        .article-content h1 {
+            font-size: 1.8rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+        .article-content h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+        }
+        .article-content p {
+            margin-bottom: 1rem;
+            line-height: 1.7;
+            color: var(--text-secondary);
+        }
+        .article-content ul, .article-content ol {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .article-content li {
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+        .article-content blockquote {
+            border-left: 4px solid var(--border-color);
+            padding-left: 1rem;
+            font-style: italic;
+            margin-bottom: 1rem;
+        }
+        .article-content img {
+            max-width: 100%;
+            height: auto;
+            margin: 1rem 0;
+            border-radius: 0.25rem;
+        }
+        .article-content code {
+            background: var(--bg-primary);
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.25rem;
+            font-family: monospace;
+        }
+        .article-content a {
+            color: var(--link-color);
+            text-decoration: none;
+        }
+        .article-content a:hover {
+            text-decoration: underline;
+            color: var(--link-hover);
+        }
+        .close-article {
             position: absolute;
             top: 1rem;
             right: 1rem;
-            background: white;
+            background: var(--bg-primary);
             border-radius: 50%;
             width: 2rem;
             height: 2rem;
@@ -72,23 +176,61 @@
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            font-size: 1.5rem;
+            font-size: 1.25rem;
+            color: var(--text-secondary);
             z-index: 1001;
+            transition: all 0.2s;
+        }
+        .close-article:hover {
+            background: var(--border-color);
+            color: var(--text-primary);
+        }
+        .article-toolbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: var(--bg-primary);
+            border-radius: 0.25rem;
+            margin-bottom: 1.5rem;
+        }
+        .article-date {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+        /* Audio player styling */
+        .audio-player {
+            /* background-color: var(--bg-primary); */
+            border-radius: 0.25rem;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+        }
+        .audio-player audio {
+            border-radius: 0.25rem;
+            /* background-color: var(--bg-primary); */
+        }
+        /* Adjust audio controls for dark mode */
+        .dark-theme .audio-player audio {
+            filter: invert(85%);
         }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen">
-    <div class="container mx-auto px-4 py-8">
+<body>
+    <div class="container mx-auto px-4 py-8 relative">
+        <button id="theme-toggle" class="theme-toggle" aria-label="Toggle dark/light mode">
+            <i id="theme-icon" class="fas fa-moon"></i>
+        </button>
+        
         <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold text-gray-800 mb-2">News Headlines</h1>
-            <p class="text-gray-600">Stay updated with the latest news</p>
+            <h1 class="text-4xl font-bold mb-2">News Headlines</h1>
+            <p class="text-muted">Stay updated with the latest news</p>
         </header>
 
         <div id="loading" class="text-center py-8">
-            <div class="loading text-4xl text-gray-400">
-                <i class="fas fa-spinner fa-spin"></i>
+            <div class="loading text-4xl">
+                <i class="fas fa-spinner fa-spin" style="color: var(--text-muted);"></i>
             </div>
-            <p class="mt-4 text-gray-500">Loading headlines...</p>
+            <p class="mt-4" style="color: var(--text-muted);">Loading headlines...</p>
         </div>
 
         <div id="error" class="hidden text-center py-8">
@@ -99,17 +241,61 @@
             <p id="error-details" class="mt-2 text-sm text-red-400"></p>
         </div>
 
-        <div id="headlines" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div id="headlines" class="grid grid-cols-1 md:grid-cols-1 lg:grid-cols-1 gap-6 max-w-3xl mx-auto">
             <!-- Headlines will be inserted here -->
         </div>
+    </div>
 
-        <div id="article-iframe-container">
-            <div class="close-iframe" onclick="closeArticle()">×</div>
-            <iframe id="article-iframe" width="100%" height="100%" frameborder="0"></iframe>
+    <!-- Article display container -->
+    <div id="article-container">
+        <div class="article-content">
+            <div class="close-article" onclick="closeArticle()">×</div>
+            <div class="article-toolbar">
+                <div class="article-date" id="article-date"></div>
+                <div class="article-actions"></div>
+            </div>
+            <div id="article-content-body"></div>
         </div>
     </div>
 
     <script>
+        // Theme toggle functionality
+        function initTheme() {
+            const themeToggle = document.getElementById('theme-toggle');
+            const themeIcon = document.getElementById('theme-icon');
+            const htmlElement = document.documentElement;
+            
+            // Check for saved theme preference
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme) {
+                htmlElement.className = savedTheme;
+                updateThemeIcon(savedTheme);
+            }
+            
+            // Toggle theme on button click
+            themeToggle.addEventListener('click', () => {
+                const currentTheme = htmlElement.className;
+                const newTheme = currentTheme === 'dark-theme' ? 'light-theme' : 'dark-theme';
+                
+                htmlElement.className = newTheme;
+                localStorage.setItem('theme', newTheme);
+                updateThemeIcon(newTheme);
+                
+                // Update all dynamic color styles
+                document.querySelectorAll('[id^="toggle-"]').forEach(btn => {
+                    btn.style.color = 'var(--link-color)';
+                });
+            });
+            
+            function updateThemeIcon(theme) {
+                if (theme === 'dark-theme') {
+                    themeIcon.className = 'fas fa-sun';
+                } else {
+                    themeIcon.className = 'fas fa-moon';
+                }
+            }
+        }
+        
         async function fetchHeadlines() {
             try {
                 console.log('Fetching headlines...');
@@ -130,70 +316,6 @@
             } catch (error) {
                 console.error('Error fetching headlines:', error);
                 showError(error.message);
-            }
-        }
-
-        async function playAudio(audioUrl, container) {
-            try {
-                console.log('Fetching audio URL from:', audioUrl);
-                const response = await fetch(audioUrl);
-                const data = await response.json();
-                console.log('Received audio data:', data);
-                
-                if (data.success && data.url) {
-                    // Remove any existing audio player
-                    // const existingPlayer = container.querySelector('audio.audio-player');
-                    const existingPlayer = document.querySelector('audio.audio-player.visible');
-                    if (existingPlayer) {
-                        console.log('Removing existing audio player');
-                        const existingContainer = existingPlayer.closest('.audio-player-container');
-                        existingPlayer.remove();
-                        if (existingContainer) {
-                            existingContainer.remove();
-                        }
-                    }
-                    
-                    // Create new audio player
-                    console.log('Creating new audio player');
-                    const audioPlayer = document.createElement('audio');
-                    audioPlayer.className = 'audio-player';
-                    audioPlayer.controls = true;
-                    
-                    // Set the audio source
-                    console.log('Setting audio source to:', data.url);
-                    audioPlayer.src = data.url;
-                    
-                    // Add event listener for when the audio is loaded
-                    audioPlayer.addEventListener('loadeddata', () => {
-                        console.log('Audio loaded successfully');
-                        audioPlayer.style.display = 'block';
-                        audioPlayer.classList.add('visible');
-                        
-                        // Scroll to the audio player
-                        audioPlayer.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        
-                        // Try to play the audio
-                        audioPlayer.play().catch(error => {
-                            console.error('Error playing audio:', error);
-                        });
-                    });
-                    
-                    // Add event listener for errors
-                    audioPlayer.addEventListener('error', (error) => {
-                        console.error('Error loading audio:', error);
-                        showError('Failed to load audio file');
-                    });
-                    
-                    // Append the audio player to the headline card
-                    container.appendChild(audioPlayer);
-                    
-                } else {
-                    console.error('Failed to get audio URL:', data);
-                    showError('Failed to load audio URL');
-                }
-            } catch (error) {
-                console.error('Error in playAudio:', error);
-                showError('Failed to play audio');
             }
         }
 
@@ -219,92 +341,273 @@
                 });
 
                 const headlineCard = document.createElement('div');
-                headlineCard.className = 'headline-card bg-white rounded-lg shadow-md p-6';
-                headlineCard.innerHTML = `
-                    <div class="mb-4">
-                        <h2 class="text-xl font-semibold text-gray-800 mb-2">${formattedDate}</h2>
-                        <div class="flex space-x-4 mt-4">
-                            <button onclick="showArticle('/api/content/${headline.date}/headlines/${headline.filename}')" 
-                               class="flex items-center text-blue-600 hover:text-blue-800">
-                                <i class="fas fa-newspaper mr-2"></i>
-                                Show Headlines
-                            </button>
-                        </div>
+                headlineCard.className = 'headline-card rounded-lg shadow-md p-6 w-full';
+                
+                // Create header section with date and article count
+                const headerSection = document.createElement('div');
+                headerSection.className = 'mb-4';
+                headerSection.innerHTML = `
+                    <h2 class="text-xl font-semibold mb-2">${formattedDate}</h2>
+                    <p class="text-muted">${headline.article_count} articles available</p>
+                    <div class="flex space-x-4 mt-4">
+                        <button id="toggle-${headline.date}" class="flex items-center" style="color: var(--link-color);">
+                            <i class="fas fa-newspaper mr-2"></i>
+                            Show Articles
+                        </button>
                     </div>
                 `;
+                headlineCard.appendChild(headerSection);
+                
+                // Create article list section
+                const articleList = document.createElement('div');
+                articleList.className = 'article-list';
+                articleList.id = `articles-${headline.date}`;
+                
+                // Add articles to the list
+                if (headline.articles && headline.articles.length > 0) {
+                    const articleListUl = document.createElement('ul');
+                    articleListUl.className = 'space-y-2 pl-2';
+                    
+                    headline.articles.forEach(article => {
+                        const articleItem = document.createElement('li');
+                        articleItem.className = 'border-l-2 border-gray-200 pl-3 py-1';
+                        
+                        const articleTitleContainer = document.createElement('div');
+                        articleTitleContainer.className = 'flex items-center justify-between';
+                        
+                        const articleTitle = document.createElement('div');
+                        articleTitle.className = 'text-lg text-gray-400 mb-1';
+                        articleTitle.textContent = article.title;
+                        
+                        articleTitleContainer.appendChild(articleTitle);
+                        articleItem.appendChild(articleTitleContainer);
+                        
+                        const articleActions = document.createElement('div');
+                        articleActions.className = 'flex space-x-3 text-sm mt-2';
+                        
+                        // Add read button
+                        const readButton = document.createElement('button');
+                        readButton.className = 'flex items-center';
+                        readButton.style.color = 'var(--link-color)';
+                        readButton.innerHTML = '<i class="fas fa-book mr-1"></i> Read';
+                        readButton.onclick = () => showArticle(
+                            article.url, 
+                            article.title, 
+                            headline.date, 
+                            formattedDate
+                        );
+                        articleActions.appendChild(readButton);
+                        
+                        // Add audio button if audio is available
+                        if (article.audio_url) {
+                            const audioButton = document.createElement('button');
+                            audioButton.className = 'flex items-center';
+                            audioButton.style.color = 'var(--link-color)';
+                            audioButton.innerHTML = '<i class="fas fa-headphones mr-1"></i> Listen';
+                            audioButton.onclick = () => showArticle(
+                                article.url, 
+                                article.title, 
+                                headline.date, 
+                                formattedDate,
+                                article.audio_url
+                            );
+                            articleActions.appendChild(audioButton);
+                        }
+                        
+                        articleItem.appendChild(articleActions);
+                        articleListUl.appendChild(articleItem);
+                    });
+                    
+                    articleList.appendChild(articleListUl);
+                } else {
+                    articleList.innerHTML = '<p class="text-gray-500 italic">No articles available for this date.</p>';
+                }
+                
+                headlineCard.appendChild(articleList);
                 headlinesContainer.appendChild(headlineCard);
+                
+                // Add toggle functionality
+                const toggleButton = headerSection.querySelector(`#toggle-${headline.date}`);
+                toggleButton.addEventListener('click', () => {
+                    const articleListElement = document.getElementById(`articles-${headline.date}`);
+                    const isVisible = articleListElement.classList.contains('visible');
+                    
+                    articleListElement.classList.toggle('visible');
+                    toggleButton.innerHTML = isVisible ? 
+                        '<i class="fas fa-newspaper mr-2"></i> Show Articles' : 
+                        '<i class="fas fa-chevron-up mr-2"></i> Hide Articles';
+                    toggleButton.style.color = 'var(--link-color)';
+                });
             });
         }
 
-        // Add function to show article in iframe
-        function showArticle(articleUrl) {
-            const iframeContainer = document.getElementById('article-iframe-container');
-            const iframe = document.getElementById('article-iframe');
+        // New function to show article content
+        async function showArticle(articleUrl, title, date, formattedDate, audioUrl = null) {
+            const articleContainer = document.getElementById('article-container');
+            const articleContentBody = document.getElementById('article-content-body');
+            const articleDateElement = document.getElementById('article-date');
+            const articleActionsElement = document.querySelector('.article-actions');
             
-            // Add event listener for iframe load
-            iframe.onload = function() {
-                try {
-                    // Get the iframe's document
-                    const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-                    
-                    // Find all audio links in the iframe
-                    const audioLinks = iframeDoc.querySelectorAll('a[href*="/audio/"]');
-                    
-                    // Add click handlers to each audio link
-                    audioLinks.forEach(link => {
-                        link.onclick = function(e) {
-                            e.preventDefault();
-                            // Create a temporary container for the audio player
-                            const audioContainer = document.createElement('div');
-                            audioContainer.className = 'audio-player-container';
-                            audioContainer.style.position = 'fixed';
-                            audioContainer.style.bottom = '20px';
-                            audioContainer.style.left = '50%';
-                            audioContainer.style.transform = 'translateX(-50%)';
-                            audioContainer.style.zIndex = '1002';
-                            audioContainer.style.backgroundColor = 'white';
-                            audioContainer.style.padding = '1rem';
-                            audioContainer.style.borderRadius = '0.5rem';
-                            audioContainer.style.boxShadow = '0 2px 10px rgba(0,0,0,0.1)';
-                            
-                            // Add close button
-                            const closeButton = document.createElement('button');
-                            closeButton.innerHTML = '×';
-                            closeButton.style.position = 'absolute';
-                            closeButton.style.top = '5px';
-                            closeButton.style.right = '5px';
-                            closeButton.style.border = 'none';
-                            closeButton.style.background = 'none';
-                            closeButton.style.cursor = 'pointer';
-                            closeButton.style.fontSize = '1.5rem';
-                            closeButton.onclick = function() {
-                                audioContainer.remove();
-                            };
-                            
-                            // Add the audio player
-                            playAudio(link.href, audioContainer);
-                            
-                            // Add the close button and container to the page
-                            audioContainer.appendChild(closeButton);
-                            document.body.appendChild(audioContainer);
-                        };
+            // Set the date
+            articleDateElement.textContent = formattedDate;
+            
+            // Clear previous actions
+            articleActionsElement.innerHTML = '';
+            
+            // Add audio player if audio URL is provided
+            if (audioUrl) {
+                // Show loading state for audio
+                const audioLoading = document.createElement('div');
+                audioLoading.className = 'text-center py-2';
+                audioLoading.innerHTML = `
+                    <div class="loading text-sm">
+                        <i class="fas fa-spinner fa-spin" style="color: var(--text-muted);"></i>
+                        <span class="ml-2" style="color: var(--text-muted);">Loading audio...</span>
+                    </div>
+                `;
+                articleActionsElement.appendChild(audioLoading);
+                
+                // Fetch audio metadata
+                fetch(audioUrl)
+                    .then(response => response.json())
+                    .then(data => {
+                        // Remove loading indicator
+                        audioLoading.remove();
+                        
+                        if (data.success) {
+                            const audioPlayer = document.createElement('div');
+                            audioPlayer.className = 'audio-player mb-4';
+                            audioPlayer.innerHTML = `
+                                <div class="flex items-center space-x-2 mb-2">
+                                    <i class="fas fa-headphones text-lg" style="color: var(--text-muted);"></i>
+                                    <span style="color: var(--text-muted);">Audio version available</span>
+                                </div>
+                                <audio controls class="w-full">
+                                    <source src="${data.url}" type="${data.content_type || 'audio/mpeg'}">
+                                    Your browser does not support the audio element.
+                                </audio>
+                            `;
+                            articleActionsElement.appendChild(audioPlayer);
+                        } else {
+                            // Show error if audio couldn't be loaded
+                            const audioError = document.createElement('div');
+                            audioError.className = 'text-sm text-red-500 mb-4';
+                            audioError.innerHTML = `
+                                <i class="fas fa-exclamation-circle mr-1"></i>
+                                Audio unavailable
+                            `;
+                            articleActionsElement.appendChild(audioError);
+                        }
+                    })
+                    .catch(error => {
+                        // Handle error
+                        audioLoading.remove();
+                        const audioError = document.createElement('div');
+                        audioError.className = 'text-sm text-red-500 mb-4';
+                        audioError.innerHTML = `
+                            <i class="fas fa-exclamation-circle mr-1"></i>
+                            Error loading audio: ${error.message}
+                        `;
+                        articleActionsElement.appendChild(audioError);
                     });
-                } catch (error) {
-                    console.error('Error setting up iframe audio links:', error);
-                }
-            };
+            }
             
-            iframe.src = articleUrl;
-            iframeContainer.classList.add('visible');
+            // Show loading state
+            articleContentBody.innerHTML = `
+                <div class="text-center py-8">
+                    <div class="loading text-4xl">
+                        <i class="fas fa-spinner fa-spin" style="color: var(--text-muted);"></i>
+                    </div>
+                    <p class="mt-4" style="color: var(--text-muted);">Loading article...</p>
+                </div>
+            `;
+            
+            // Show the article container
+            articleContainer.classList.add('visible');
+            
+            try {
+                // Fetch the article content
+                const response = await fetch(articleUrl);
+                const articleContent = await response.text();
+                
+                // Process markdown content
+                const formattedContent = formatMarkdown(articleContent);
+                
+                // Add the title
+                const titleElement = document.createElement('h1');
+                titleElement.textContent = title;
+                
+                // Set the article content
+                articleContentBody.innerHTML = '';
+                articleContentBody.appendChild(titleElement);
+                articleContentBody.innerHTML += formattedContent;
+                
+                // Add styling to any links in the article
+                const links = articleContentBody.querySelectorAll('a');
+                links.forEach(link => {
+                    link.style.color = 'var(--link-color)';
+                    link.classList.add('hover:underline');
+                });
+                
+            } catch (error) {
+                console.error('Error loading article:', error);
+                articleContentBody.innerHTML = `
+                    <div class="text-center py-8">
+                        <div class="text-red-500 text-4xl mb-4">
+                            <i class="fas fa-exclamation-circle"></i>
+                        </div>
+                        <p class="text-red-500">Failed to load article. Please try again later.</p>
+                        <p class="mt-2 text-sm text-red-400">${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+        
+        // Helper function to format markdown content
+        function formatMarkdown(markdown) {
+            // Decode HTML entities first
+            let decodedMarkdown = markdown
+                .replace(/&apos;/g, "'")
+                .replace(/&quot;/g, '"')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&amp;/g, '&')
+                .replace(/&#39;/g, "'")
+                .replace(/&#x27;/g, "'")
+                .replace(/&#x27;/g, "'")
+                .replace(/&#x2019;/g, "'")
+                .replace(/â/g, "'")
+                ;
+            
+            // Basic markdown formatting
+            let html = decodedMarkdown
+                // Headers
+                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                // Bold
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                // Italic
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                // Links
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+                // Lists
+                .replace(/^\s*\*\s(.*$)/gm, '<li>$1</li>')
+                // Paragraphs
+                .replace(/^\s*([^\s<][^<]*?)\s*$/gm, '<p>$1</p>');
+            
+            // Wrap lists
+            html = html.replace(/<li>(.*?)<\/li>\s*<li>/g, '<li>$1</li><li>');
+            html = html.replace(/<li>(.*?)<\/li>/g, '<ul><li>$1</li></ul>');
+            html = html.replace(/<\/ul>\s*<ul>/g, '');
+            
+            return html;
         }
 
-        // Add function to close iframe
+        // Function to close article view
         function closeArticle() {
-            const iframeContainer = document.getElementById('article-iframe-container');
-            const iframe = document.getElementById('article-iframe');
-            
-            iframe.src = '';
-            iframeContainer.classList.remove('visible');
+            const articleContainer = document.getElementById('article-container');
+            articleContainer.classList.remove('visible');
         }
 
         function showError(message, details = '') {
@@ -317,8 +620,18 @@
             }
         }
 
-        // Fetch headlines when the page loads
-        document.addEventListener('DOMContentLoaded', fetchHeadlines);
+        // Initialize theme and fetch headlines when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            initTheme();
+            fetchHeadlines();
+        });
+        
+        // Close article view if clicking outside content
+        document.getElementById('article-container').addEventListener('click', function(event) {
+            if (event.target === this) {
+                closeArticle();
+            }
+        });
     </script>
 </body>
 </html> 

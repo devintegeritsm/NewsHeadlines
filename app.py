@@ -57,51 +57,120 @@ except Exception as e:
 @app.route('/')
 def index():
     """Render the main page with headlines."""
-    return render_template('index.html')
+    try:
+        # Get dates with available articles for the last 7 days
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=7)
+        
+        logger.info(f"Fetching dates with articles from {start_date} to {end_date}")
+        
+        # Get unique dates that have articles in Supabase
+        response = supabase.table("content") \
+                           .select("date") \
+                           .eq("content_type", "article") \
+                           .gte("date", start_date.strftime("%Y-%m-%d")) \
+                           .lte("date", end_date.strftime("%Y-%m-%d")) \
+                           .execute()
+        
+        # Extract unique dates with articles
+        unique_dates = set()
+        for item in response.data:
+            unique_dates.add(item['date'])
+        
+        logger.info(f"Found {len(unique_dates)} dates with articles")
+        
+        # Render the template with dates that have articles
+        return render_template('index.html', dates_with_articles=list(unique_dates))
+        
+    except Exception as e:
+        logger.error(f"Error in index route: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return render_template('index.html', error=str(e))
 
 @app.route('/api/headlines')
 def get_headlines():
-    """Get headlines for the last 7 days."""
+    """Get headlines for the last 7 days from available articles."""
     try:
         # Calculate date range
         end_date = datetime.now()
         start_date = end_date - timedelta(days=7)
         
-        logger.info(f"Fetching headlines from {start_date} to {end_date}")
+        logger.info(f"Fetching article-based headlines from {start_date} to {end_date}")
         
         try:
-            # Query Supabase for headlines with detailed logging
-            logger.info("Executing Supabase query...")
+            # Query Supabase for articles with detailed logging
+            logger.info("Executing Supabase query for articles...")
             
-            # First, check if the table exists and has data
-            test_query = supabase.table("content").select("count").execute()
-            logger.info(f"Table test query response: {test_query}")
+            # Get unique dates that have articles in Supabase
+            date_response = supabase.table("content") \
+                                   .select("date") \
+                                   .eq("content_type", "article") \
+                                   .gte("date", start_date.strftime("%Y-%m-%d")) \
+                                   .lte("date", end_date.strftime("%Y-%m-%d")) \
+                                   .execute()
             
-            # Main query
-            response = supabase.table("content") \
-                             .select("*") \
-                             .eq("content_type", "headlines") \
-                             .gte("date", start_date.strftime("%Y-%m-%d")) \
-                             .lte("date", end_date.strftime("%Y-%m-%d")) \
-                             .execute()
+            # Extract unique dates
+            unique_dates = set()
+            for item in date_response.data:
+                unique_dates.add(item['date'])
             
-            logger.info(f"Supabase query response: {response}")
-            logger.info(f"Response data: {response.data}")
+            logger.info(f"Found articles for {len(unique_dates)} unique dates")
             
             headlines = []
-            for item in response.data:
-                try:
-                    logger.info(f"Processing item: {item}")
-                    headlines.append({
-                        'date': item['date'],
-                        'url': item['public_url'],
-                        'filename': item['filename']
-                    })
-                except KeyError as ke:
-                    logger.error(f"Missing key in item data: {ke}")
-                    logger.error(f"Item data: {item}")
             
-            logger.info(f"Successfully processed {len(headlines)} headlines")
+            # For each date, get the articles and create a headline entry
+            for date in sorted(unique_dates, reverse=True):
+                # Get articles for this date
+                articles_response = supabase.table("content") \
+                                           .select("*") \
+                                           .eq("content_type", "article") \
+                                           .eq("date", date) \
+                                           .limit(1000) \
+                                           .execute()
+                
+                logger.info(f"Found {len(articles_response.data)} articles for date {date}")
+                
+                if articles_response.data:
+                    # Format headline data for this date
+                    headline_data = {
+                        'date': date,
+                        'article_count': len(articles_response.data),
+                        'articles': []
+                    }
+                    
+                    # Add article info
+                    for article in articles_response.data:
+                        try:
+                            article_filename = article['filename']
+                            article_title = article_filename.replace('-', ' ').replace('.md', '').title()
+                            
+                            article_info = {
+                                'filename': article_filename,
+                                'title': article_title,
+                                'url': f"/api/content/{date}/article/{article_filename}",
+                            }
+                            
+                            # Check if there's a corresponding audio file
+                            audio_filename = article_filename.replace('.md', '.wav')
+                            audio_response = supabase.table("content") \
+                                                   .select("*") \
+                                                   .eq("content_type", "audio") \
+                                                   .eq("date", date) \
+                                                   .eq("filename", audio_filename) \
+                                                   .execute()
+                            
+                            if audio_response.data:
+                                article_info['audio_url'] = f"/api/content/{date}/audio/{audio_filename}"
+                            
+                            headline_data['articles'].append(article_info)
+                            
+                        except KeyError as ke:
+                            logger.error(f"Missing key in article data: {ke}")
+                            logger.error(f"Article data: {article}")
+                    
+                    headlines.append(headline_data)
+            
+            logger.info(f"Successfully processed headlines for {len(headlines)} dates")
             return jsonify({
                 'success': True,
                 'headlines': headlines
@@ -139,9 +208,9 @@ def get_content(date, content_type, filename):
         logger.info(f"Using filename: {actual_filename}")
         
         # Determine the correct content type
-        if filename.endswith('.mp3') or filename.endswith('.wav'):
+        if actual_filename.endswith('.mp3') or actual_filename.endswith('.wav'):
             actual_content_type = "audio"
-        elif "article" in filename:
+        elif "article" in filename or actual_filename.endswith('.md'):
             actual_content_type = "article"
         else:
             actual_content_type = content_type
@@ -184,9 +253,11 @@ def get_content(date, content_type, filename):
             
             # For audio files, return the URL directly
             if actual_filename.endswith('.mp3') or actual_filename.endswith('.wav'):
+                audio_type = 'audio/mpeg' if actual_filename.endswith('.mp3') else 'audio/wav'
                 return jsonify({
                     'success': True,
-                    'url': url
+                    'url': url,
+                    'content_type': audio_type
                 })
             
             return jsonify({

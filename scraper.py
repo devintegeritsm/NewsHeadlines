@@ -4,18 +4,18 @@ import os
 import re
 from dotenv import load_dotenv
 import requests
-from urllib.parse import urlparse
 from datetime import datetime
 import time
 import soundfile as sf
 import numpy as np
 # from f5_tts_mlx.generate import generate
 import base64
-from supabase_api import delete_headlines_from_supabase, get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
-from bs4 import BeautifulSoup
-import supabase
+from supabase_api import get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
 from supabase import create_client
 from kokoro_api import generate_audio
+from unidecode import unidecode
+import argparse
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -24,8 +24,8 @@ load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Configure the custom AI API
-# ENABLE_FILTERING_WITH_CUSTOM_AI = True
-ENABLE_FILTERING_WITH_CUSTOM_AI = False
+ENABLE_PROCESSING_WITH_CUSTOM_AI = True
+ENABLE_UPLOAD_TO_BACKEND = True
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
 MODEL_NAME = "deepseek-r1-distill-qwen-7b"
 AI_TIMEOUT = 300  # 5 minutes timeout (increased from 3 minutes)
@@ -40,7 +40,7 @@ TTS_OUTPUT_FORMAT = ".wav"
 # Function to check API availability and get available models
 def check_api_availability():
     """Check if the API is available and get available models."""
-    print(f"Checking API availability at {CUSTOM_AI_ENDPOINT}...")
+    print(f"Checking LocalAPI availability at {CUSTOM_AI_ENDPOINT}...")
     
     try:
         response = requests.get(f"{CUSTOM_AI_ENDPOINT}/v1/models", timeout=10)
@@ -50,97 +50,62 @@ def check_api_availability():
             if 'data' in models_data and len(models_data['data']) > 0:
                 # Get the first model from the list
                 first_model = models_data['data'][0]['id']
-                print(f"API is available. First available model: {first_model}")
+                print(f"LocalAPI is available. First available model: {first_model}")
                 return True, first_model
             else:
-                print("API is available but no models found.")
+                print("LocalAPI is available but no models found.")
                 return True, None
         else:
-            print(f"API check failed with status code: {response.status_code}")
+            print(f"LocalAPI check failed with status code: {response.status_code}")
             return False, None
     except Exception as e:
-        print(f"API availability check failed with error: {str(e)}")
+        print(f"Local API availability check failed with error: {str(e)}")
         return False, None
 
 # Function to test the API functionality
 def test_api_functionality():
     """Test the API functionality by checking if it's available and content bucket exists."""
-    print("Testing API functionality...")
     
-    # Check API availability and get models
-    api_available, first_model = check_api_availability()
-    if not api_available:
-        print("API is not available. Exiting...")
-        return False
-    
-    # Update MODEL_NAME with the first available model if found
-    # if first_model:
-    #     global MODEL_NAME
-    #     MODEL_NAME = first_model
-
-    print(f"Using model: {MODEL_NAME}")
-    
-    try:
-        # Check if content bucket exists
-        bucket_exists = ensure_storage_bucket()
-        if bucket_exists:
-            print("API test successful! Content bucket exists and is accessible.")
-            return True
-        else:
-            print("API test failed. Content bucket does not exist or is not accessible.")
+    if ENABLE_PROCESSING_WITH_CUSTOM_AI:
+        # Check API availability and get models
+        api_available, first_model = check_api_availability()
+        if not api_available:
             return False
-    except Exception as e:
-        print(f"API test failed with error: {str(e)}")
-        return False
-
-def extract_date_from_url(url):
-    """Extract date from URL or return current date if not found."""
-    try:
-        # Try to extract date from URL (e.g., april-3-2025)
-        parts = url.split('/')
-        for part in parts:
-            if '-' in part and any(month in part.lower() for month in ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']):
-                # Parse the date string
-                date_parts = part.split('-')
-                if len(date_parts) >= 3:
-                    month_str = date_parts[0].lower()
-                    day = int(date_parts[1])
-                    year = int(date_parts[2])
-                    
-                    # Convert month name to number
-                    months = {
-                        'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
-                        'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
-                    }
-                    month = months.get(month_str, 1)
-                    
-                    return datetime(year, month, day)
-    except Exception as e:
-        print(f"Error extracting date from URL: {e}")
     
-    # Return current date if extraction fails
-    return datetime.now()
+        # Update MODEL_NAME with the first available model if found
+        # if first_model:
+        #     global MODEL_NAME
+        #     MODEL_NAME = first_model
 
-def get_date_based_filename(date, suffix="", extension=".md"):
+        print(f"Local API is available. Using model: {MODEL_NAME}")
+    
+    if ENABLE_UPLOAD_TO_BACKEND:
+        print("Testing remote API is available...")
+        try:
+            # Check if content bucket exists
+            bucket_exists = ensure_storage_bucket()
+            if bucket_exists:
+                print("Remote API test successful! Content bucket exists and is accessible.")
+                return True
+            else:
+                print("Remote API test failed. Content bucket does not exist or is not accessible.")
+                return False
+        except Exception as e:
+            print(f"API test failed with error: {str(e)}")
+            return False
+    
+    return True
+
+def get_date_based_filename(date_str: str, suffix="", extension=".md"):
     """Generate a filename based on the date in YYYY-MM-DD format"""
-    if isinstance(date, str):
-        # If date is already a string in the correct format, use it directly
-        formatted_date = date
-    else:
-        # Format datetime object
-        formatted_date = date.strftime("%Y-%m-%d")
-    
     # Clean up the suffix
     if suffix:
         suffix = f"-{suffix.strip('-')}"
     
-    return f"{formatted_date}{suffix}{extension}"
+    return f"{date_str}{suffix}{extension}"
 
-def get_article_folder_name(date=None):
+def get_article_folder_name(date_str: str):
     """Generate a folder name based on the article date."""
-    if date is None:
-        date = datetime.now()
-    date_str = date.strftime("%Y-%m-%d")
     return f"{date_str}-article"
 
 def file_exists(filename):
@@ -179,27 +144,18 @@ def extract_headlines(content):
         # Print first few characters of the line for debugging
         print(f"Processing line {i}: {line[:50]}...")
             
-        # Check if this line is likely a headline
-        if len(line) < 100 and not line.endswith('.'):  # Headlines are typically shorter and don't end with periods
+        #Check if this line is likely a headline
+        if (len(line) <= 108 and not line.endswith('.')
+            and not line.endswith(':')
+            and line.startswith(HEADLINE_TAG)):  # Headlines are typically shorter and don't end with periods
             # Check if this line is followed by a longer paragraph
             if i < len(lines) - 1:
                 next_line = lines[i+1].strip()
                 
-                # If the next line is empty, look at the line after that
-                if not next_line and i < len(lines) - 2:
-                    next_line = lines[i+2].strip()
-                
-                # If the next non-empty line is a longer paragraph, this is likely a headline
-                if next_line and len(next_line) > 100:
-                    # Additional checks to confirm it's a headline
-                    if (':' in line or  # Common headline punctuation
-                        '-' in line or
-                        line.istitle() or  # Title case is common in headlines
-                        any(word.isupper() for word in line.split()) or  # Contains uppercase words
-                        (i > 0 and not lines[i-1].strip())):  # Preceded by a blank line
-                        print(f"Found headline: {line}")
-                        headlines.append(line)
-    
+                if not next_line:  # Preceded by a blank line
+                    print(f"Found headline: {line}")
+                    headlines.append(line.replace(HEADLINE_TAG, ''))
+
     print(f"Finished processing. Found {len(headlines)} headlines.")
     if headlines:
         print("Headlines found:")
@@ -366,84 +322,10 @@ def filter_headlines_with_custom_ai(headlines):
         print(f"Unexpected error when calling custom AI API: {type(e).__name__} - {e}")
         return headlines  # Return all headlines if any other error occurs
 
-def format_content_with_headlines(content, title, filtered_headlines):
-    """
-    Format the content as markdown using the filtered headlines.
-    """
-    # Clean up the title
-    clean_title = title.split('|')[0].strip()
-    
-    # Start with the title
-    markdown = f"# {clean_title}\n\n"
-    
-    # Split content into paragraphs
-    paragraphs = content.split('\n')
-    
-    # Track if we're in a section that should be included
-    include_section = True
-    
-    # Process each paragraph
-    for paragraph in paragraphs:
-        paragraph = paragraph.strip()
-        if not paragraph:
-            continue
-            
-        # Check if this is a section header
-        is_header = paragraph.isupper() or paragraph.endswith(':')
-        
-        if is_header:
-            # Check if this header is in our filtered list
-            include_section = paragraph in filtered_headlines
-            if include_section:
-                markdown += f"## {paragraph}\n\n"
-        elif include_section:
-            # Include paragraph if we're in a section that should be included
-            markdown += f"{paragraph}\n\n"
-    
-    return markdown
-
-def upload_headlines(content, filename, date_str):
-    """Save content to a file and upload to Supabase."""
-    try:
-        # Save content to a file
-        with open(filename, 'w', encoding='utf-8') as f:
-            f.write(content)
-        print(f"Content saved to: {filename}")
-        
-        # Clean supabase table
-        delete_headlines_from_supabase(date_str)
-        
-        # Upload to Supabase
-        try:
-            success, url = upload_content_to_supabase(
-                date_str=date_str,
-                content_type='headlines',
-                filename=filename,
-                content=content
-            )
-            
-            if success:
-                print(f"Successfully uploaded {filename} to Supabase: {url}")
-                return True
-            else:
-                print(f"Failed to upload {filename} to Supabase")
-                return False
-                
-        except Exception as upload_error:
-            print(f"Error uploading to Supabase: {upload_error}")
-            return False
-            
-    except Exception as e:
-        print(f"Error saving content: {e}")
-        return False
 
 def split_content_by_topics(content, headlines, article_folder):
     """Split content into separate files based on headlines."""
     try:
-        # Get the date from the article folder name
-        date_str = article_folder.split('-article')[0]
-
-        files = get_files_from_supabase(f"{date_str}/article")
         # Split content into sections based on headlines
         sections = []
         current_section = []
@@ -456,7 +338,8 @@ def split_content_by_topics(content, headlines, article_folder):
                     sections.append('\n'.join(current_section))
                 current_section = [line]
             else:
-                current_section.append(line)
+                if current_section:
+                    current_section.append(line)
         
         if current_section:
             sections.append('\n'.join(current_section))
@@ -471,66 +354,50 @@ def split_content_by_topics(content, headlines, article_folder):
             filename = re.sub(r'[^\w\s-]', '', filename)  # Remove all special characters except hyphens
             filename = re.sub(r'[-\s]+', '-', filename)  # Replace multiple spaces/hyphens with single hyphen
             filename = filename.strip('-')  # Remove leading/trailing hyphens
+            filename = unidecode(filename)
             filename = f"{filename}.md"
             filepath = os.path.join(article_folder, filename)
             
             # Write the content to the file
             with open(filepath, 'w', encoding='utf-8') as f:
+                section = section.replace(HEADLINE_TAG, '')
                 f.write(section)
 
-            article_filename = os.path.basename(filepath)
-            print(f"Precessing article file {article_filename}...")
-            try:
-                article_exists = any(f['name'] == article_filename for f in files)
-                if article_exists:
-                    print(f"Article file already exists in Supabase for {filepath}")
-                    continue    
-            except Exception as e:
-                print(f"Error checking article file on Supabase: {str(e)}")
-            
-            # Upload the file to Supabase
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                success, url = upload_content_to_supabase(date_str, "article", article_filename, content)
-                if success:
-                    print(f"Successfully uploaded {filename} to Supabase: {url}")
-                else:
-                    print(f"Failed to upload {filename} to Supabase")
-            except Exception as e:
-                print(f"Error uploading {filename} to Supabase: {str(e)}")
-        
         return True
     except Exception as e:
         print(f"Error splitting content: {str(e)}")
         return False
 
-def save_topic_files(headlines, folder_name):
-    """Save topic files to the specified folder"""
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-    
-    topic_files = []
-    for headline in headlines:
-        # Create safe filename
-        safe_filename = re.sub(r'[^\w\s-]', '', headline.lower())
-        safe_filename = re.sub(r'[-\s]+', '-', safe_filename).strip('-')
-        filepath = os.path.join(folder_name, f"{safe_filename}.md")
-        topic_files.append(filepath)
-    
-    return topic_files
+HEADLINE_TAG = "*****"
+STRONG_TAG = "#####"
 
 def clean_html_tags(content):
     """Remove HTML tags from content while preserving text and structure."""
+
+    # Truncate content after </article> tag
+    tag = '</article>'
+    tag_index = content.find(tag)
+
+    if tag_index != -1:
+        # Calculate the end position in the original content
+        end_pos = tag_index + len(tag)
+        content = content[:end_pos]
+
     # First, preserve line breaks by replacing <br>, </p>, and </div> with newlines
     content = re.sub(r'<br[^>]*>', '\n', content, flags=re.IGNORECASE)
     content = re.sub(r'</p>', '\n\n', content, flags=re.IGNORECASE)
     content = re.sub(r'</div>', '\n', content, flags=re.IGNORECASE)
+    content = re.sub(r'<strong>', STRONG_TAG, content, flags=re.IGNORECASE)
+    # content = re.sub(r'<li>', '* <li>', content, flags=re.IGNORECASE)
     
     # Remove script and style tags and their content
     content = re.sub(r'<script.*?</script>', '', content, flags=re.DOTALL | re.IGNORECASE)
     content = re.sub(r'<style.*?</style>', '', content, flags=re.DOTALL | re.IGNORECASE)
     
+    # Remove h1,h2 tags and their content
+    content = re.sub(r'<h1.*?</h1>', '', content, flags=re.DOTALL | re.IGNORECASE)
+    content = re.sub(r'<h2.*?</h2>', '', content, flags=re.DOTALL | re.IGNORECASE)
+
     # Replace common HTML entities
     content = content.replace('&nbsp;', ' ')
     content = content.replace('&amp;', '&')
@@ -538,13 +405,16 @@ def clean_html_tags(content):
     content = content.replace('&gt;', '>')
     content = content.replace('&quot;', '"')
     content = content.replace('&#39;', "'")
-    
+
     # Remove all remaining HTML tags
     content = re.sub(r'<[^>]+>', '', content)
-    
+    content = content.replace(f'\n{STRONG_TAG}', f'\n{HEADLINE_TAG}')
+    content = content.replace(STRONG_TAG, '')
+
     # Clean up whitespace while preserving line breaks
     content = re.sub(r' +', ' ', content)  # Multiple spaces to single space
     content = re.sub(r'\n\s*\n', '\n\n', content)  # Multiple blank lines to double line break
+
     content = content.strip()
     
     print(f"Cleaned content length: {len(content)}")
@@ -553,7 +423,7 @@ def clean_html_tags(content):
     
     return content
 
-def process_news_content(content, article_date):
+def process_news_content(content, article_date: str):
     """Process the news content and generate all necessary files."""
     try:
         # Clean HTML tags from content
@@ -588,55 +458,96 @@ def process_news_content(content, article_date):
             print(f"Error splitting content: {str(e)}")
             return False
 
-        if ENABLE_FILTERING_WITH_CUSTOM_AI:
+        if ENABLE_PROCESSING_WITH_CUSTOM_AI:
             # Filter articles with custom AI
-            article_files = [f for f in os.listdir(article_folder) if f.endswith('.md')]
-            filtered_article_files = []
-
-            print(f"Filtering {len(article_files)} articles with custom AI...")
-            for article_file in article_files:
-                article_path = os.path.join(article_folder, article_file)
-                
-                # Read article content
-                with open(article_path, 'r', encoding='utf-8') as f:
-                    article_content = f.read()
-                
-                # Filter article
-                should_exclude = filter_article_with_custom_ai(article_content)
-                
-                if should_exclude:
-                    print(f"Excluding article: {article_file} (matches exclusion criteria)")
-                    # Remove the file as it's excluded
-                    os.remove(article_path)
-                else:
-                    print(f"Keeping article: {article_file}")
-                    filtered_article_files.append(article_file)
+            process_articles_with_custom_ai(article_folder)
             
-            print(f"Filtered articles. Kept {len(filtered_article_files)} out of {len(article_files)} articles.")
-        
-            # If all articles were filtered out, return early
-            if not filtered_article_files:
-                print("All articles were filtered out. Nothing to process further.")
-                return True
+        if ENABLE_UPLOAD_TO_BACKEND:
+            # Upload the filtered articles to Supabase
+            upload_articles_to_supabase(article_date, article_folder)
 
         # Generate audio files for filtered articles
         try:
-            generate_audio_for_articles(article_date, TTS_PROVIDER)
+            generate_audio_for_articles(article_date, article_folder, TTS_PROVIDER)
             print("Audio files generated successfully.")
         except Exception as e:
             print(f"Error generating audio files: {str(e)}")
-
-        # Generate HTML page
-        try:
-            generate_headlines_html(article_date)
-            print("HTML page generated successfully.")
-        except Exception as e:
-            print(f"Error generating HTML page: {str(e)}")
 
         return True
     except Exception as e:
         print(f"Error processing news content: {str(e)}")
         return False
+    
+def get_article_files(article_folder: str, extension: str = ".md"):
+    """Get all article files from the article folder."""
+    if not os.path.exists(article_folder):
+        print(f"Article folder {article_folder} not found.")
+        return []
+    
+    return [f for f in os.listdir(article_folder) if f.endswith(extension)] #[:5]
+    
+
+def process_articles_with_custom_ai(article_folder: str):
+    """Process the articles with custom AI."""
+    article_files = get_article_files(article_folder)
+
+    filtered_article_files = []
+
+    print(f"Filtering {len(article_files)} articles with custom AI...")
+    for article_file in article_files:
+        article_path = os.path.join(article_folder, article_file)
+        
+        # Read article content
+        with open(article_path, 'r', encoding='utf-8') as f:
+            article_content = f.read()
+        
+        # Filter article
+        should_exclude = filter_article_with_custom_ai(article_content)
+        
+        if should_exclude:
+            print(f"Excluding article: {article_file} (matches exclusion criteria)")
+            # Remove the file as it's excluded
+            os.remove(article_path)
+        else:
+            print(f"Keeping article: {article_file}")
+            filtered_article_files.append(article_file)
+        
+    print(f"Filtered articles. Kept {len(filtered_article_files)} out of {len(article_files)} articles.")
+        
+
+def upload_articles_to_supabase(date_str: str, article_folder):
+    """Upload the filtered articles to Supabase."""
+
+    article_files = get_article_files(article_folder)
+
+    print(f"Uploading {len(article_files)} articles to Supabase from {article_folder} folder...")
+
+    files = get_files_from_supabase(f"{date_str}/article")
+
+    for article_file in article_files:
+        article_path = os.path.join(article_folder, article_file)
+
+        print(f"Precessing article file {article_file}...")
+        try:
+            article_exists = any(f['name'] == article_file for f in files)
+            if article_exists:
+                print(f"Article file already exists in Supabase for {article_file}")
+                continue    
+        except Exception as e:
+            print(f"Error checking article file on Supabase: {str(e)}")
+            
+        # Upload the file to Supabase
+        try:
+            with open(article_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            success, url = upload_content_to_supabase(date_str, "article", article_file, content)
+            if success:
+                print(f"Successfully uploaded {article_file} to Supabase: {url}")
+            else:
+                print(f"Failed to upload {article_file} to Supabase")
+        except Exception as e:
+            print(f"Error uploading {article_file} to Supabase: {str(e)}")
+
 
 def filter_article_with_custom_ai(article_content):
     """
@@ -751,12 +662,15 @@ def scrape_first_news_link(url: str, force_refresh: bool = False):
                 # Extract date from the link text or href
                 date_match = re.search(r'(\w+ \d+, \d{4})', link_text)
                 if date_match:
-                    article_date = datetime.strptime(date_match.group(1), "%B %d, %Y")
+                    parsed_date = datetime.strptime(date_match.group(1), "%B %d, %Y")
                 else:
                     # Fallback to current date
-                    article_date = datetime.now()
+                    print(f"Cannot parse a link date")
+                    return False
                 
-                print(f"\n{article_date.strftime('%B %d, %Y').lower()}")
+                # Format datetime object
+                article_date = parsed_date.strftime("%Y-%m-%d")
+                print(f"Parsed a link date {article_date}")
                 
                 # Check if content already exists for this date
                 content_file = get_date_based_filename(article_date)
@@ -792,27 +706,18 @@ def scrape_first_news_link(url: str, force_refresh: bool = False):
                 browser.close()
             return False
 
-def generate_audio_for_articles(date, provider: str):
-    """Generate audio files for each article using f5-tts-mlx."""
-    if isinstance(date, str):
-        date_str = date
-    else:
-        date_str = date.strftime("%Y-%m-%d")
-    article_folder = f"{date_str}-article"
-    
-    if not os.path.exists(article_folder):
-        print(f"Article folder {article_folder} not found.")
-        return False
+def generate_audio_for_articles(date_str: str, article_folder: str, provider: str):
+    """Generate audio files for each article using tts."""
     
     try:
         # Get all markdown files in the article folder
-        article_files = [f for f in os.listdir(article_folder) if f.endswith('.md')]
+        article_files = get_article_files(article_folder)
         
-        files = get_files_from_supabase(f"{date_str}/audio")
+        files = get_files_from_supabase(f"{date_str}/audio") if ENABLE_UPLOAD_TO_BACKEND else []
 
         # Process all articles
-        # for article_file in article_files[:5]:
         for article_file in article_files:
+        # for article_file in article_files:
             article_path = os.path.join(article_folder, article_file)
             audio_file = article_path.replace('.md', TTS_OUTPUT_FORMAT)
                 
@@ -851,25 +756,25 @@ def generate_audio_for_articles(date, provider: str):
                     generate_audio(content, audio_file)
                 print(f"Successfully generated audio for {article_file}")
                 
-                # Read the generated audio file
-                with open(audio_file, 'rb') as f:
-                    audio_data = f.read()
+                if ENABLE_UPLOAD_TO_BACKEND:
+                    # Read the generated audio file
+                    with open(audio_file, 'rb') as f:
+                        audio_data = f.read()
                 
-                # Upload to Supabase
-                success, url = upload_content_to_supabase(
-                    date_str=date_str,
-                    content_type="audio",
-                    filename=audio_filename,
-                    content=audio_data,
-                    is_binary=True
-                )
-                
-                if success:
-                    print(f"Successfully uploaded audio for {article_file}")
-                    print(f"Audio URL: {url}")
-                else:
-                    print(f"Failed to upload audio for {article_file}")
-                
+                    # Upload to Supabase
+                    success, url = upload_content_to_supabase(
+                        date_str=date_str,
+                        content_type="audio",
+                        filename=audio_filename,
+                        content=audio_data,
+                        is_binary=True
+                    )
+                    
+                    if success:
+                        print(f"Successfully uploaded audio for {article_file}")
+                        print(f"Audio URL: {url}")
+                    else:
+                        print(f"Failed to upload audio for {article_file}")
                 
             except Exception as e:
                 print(f"Failed to generate audio for {article_file}: {e}")
@@ -880,57 +785,23 @@ def generate_audio_for_articles(date, provider: str):
         print(f"Error generating audio files: {e}")
         return False
 
-def generate_headlines_html(date=None):
-    """Generate HTML file with headlines and upload to Supabase."""
-    if date is None:
-        date = datetime.now()
-    
-    date_str = date.strftime("%Y-%m-%d")
-    folder_name = get_article_folder_name(date)
-    
-    # Get all markdown files in the folder
-    markdown_files = [f for f in os.listdir(folder_name) if f.endswith('.md')]
-    
-    # Create HTML content
-    html_content = f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>News Headlines - {date_str}</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 20px; }}
-        .headline {{ margin: 10px 0; padding: 10px; border-bottom: 1px solid #eee; }}
-    </style>
-</head>
-<body>
-    <h1>News Headlines - {date_str}</h1>"""
-    
-    for md_file in markdown_files:
-        # Read the first line of each markdown file as the headline
-        with open(os.path.join(folder_name, md_file), 'r') as f:
-            headline = f.readline().strip('# \n')
-        
-        html_content += f"""
-    <div class="headline">
-        <h2>{headline}</h2>
-        <a href="/api/content/{date_str}/article/{md_file}">Read more</a>
-        <a href="/api/content/{date_str}/audio/{md_file.replace('.md', TTS_OUTPUT_FORMAT)}">Listen to audio</a>
-    </div>"""
-    
-    html_content += """
-</body>
-</html>"""
-    
-    # Save and upload the HTML file
-    html_filename = f"{date_str}-headlines.html"
-    success = upload_headlines(html_content, html_filename, date_str)
-    
-    if success:
-        print(f"Successfully generated and uploaded headlines HTML for {date_str}")
-    else:
-        print(f"Failed to generate or upload headlines HTML for {date_str}")
-
 def main():
     """Main function to run the scraper."""
+
+    parser = argparse.ArgumentParser(description="A simple example script using argparse.")
+    parser.add_argument("--no-ai-filtering", action="store_true", help="Disable AI filtering")
+    parser.add_argument("--no-supabase", action="store_true", help="Disable upload to supabase")
+    args = parser.parse_args()
+
+    global ENABLE_PROCESSING_WITH_CUSTOM_AI
+    global ENABLE_UPLOAD_TO_BACKEND
+    if args.no_ai_filtering:
+        ENABLE_PROCESSING_WITH_CUSTOM_AI = False
+        print("AI filtering disabled")
+    if args.no_supabase:
+        ENABLE_UPLOAD_TO_BACKEND = False
+        print("Upload to supabase disabled")
+
     try:
         print("Starting script...")
         

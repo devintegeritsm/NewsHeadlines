@@ -91,6 +91,7 @@ def upload_content_to_supabase(date_str: str, content_type: str, filename: str, 
     Returns:
         Success status and URL if successful
     """
+
     try:
         # Ensure the storage bucket and table exist
         ensure_storage_bucket()
@@ -119,6 +120,16 @@ def upload_content_to_supabase(date_str: str, content_type: str, filename: str, 
             else:
                 temp_file.write(content_encoded.encode('utf-8'))
             temp_file_path = temp_file.name
+
+        upload_content_type = "text/plain"
+        if filename.endswith(".html"):
+            upload_content_type = "text/html"
+        elif filename.endswith(".md"):
+            upload_content_type = "text/markdown"
+        elif filename.endswith(".mp3"):
+            upload_content_type = "audio/mpeg"
+        elif filename.endswith(".wav"):
+            upload_content_type = "audio/wav"
         
         try:
             # Upload to Supabase Storage using admin client
@@ -126,7 +137,7 @@ def upload_content_to_supabase(date_str: str, content_type: str, filename: str, 
                 storage_response = supabase_admin.storage.from_("content").upload(
                     path=storage_path,
                     file=file,
-                    file_options={"x-upsert": "true", "content-type": "text/plain" if not is_binary else "audio/mpeg"}
+                    file_options={"x-upsert": "true", "content-type": upload_content_type}
                 )
             
             # Get the public URL using admin client

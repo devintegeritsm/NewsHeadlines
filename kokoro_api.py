@@ -12,6 +12,10 @@ import warnings
 warnings.filterwarnings("ignore", message="dropout option adds dropout after all but last recurrent layer")
 warnings.filterwarnings("ignore", message="`torch.nn.utils.weight_norm` is deprecated in favor of `torch.nn.utils.parametrizations.weight_norm`")
 
+TMP_FOLDER = 'tmp'
+if not os.path.exists(TMP_FOLDER):
+    os.makedirs(TMP_FOLDER)
+
 def concatenate_wav_files(base_filename, num_files, output_filename):
     """Concatenate multiple WAV files into a single file."""
     audio_data = []
@@ -38,7 +42,7 @@ def generate_audio(text: str, output_filename: str):
     generator = pipeline(text, voice='af_heart')
     segments = 0
     
-    temp_filename_base = str(uuid.uuid4())
+    temp_filename_base = f'{TMP_FOLDER}/{uuid.uuid4()}'
     for i, (gs, ps, audio) in enumerate(generator):
         # print(i, gs, ps)
         # display(Audio(data=audio, rate=24000, autoplay=i==0))

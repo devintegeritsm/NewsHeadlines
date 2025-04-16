@@ -150,6 +150,10 @@ def get_headlines():
                                 'url': f"/api/content/{date}/article/{article_filename}",
                             }
                             
+                            # Add political score if it exists and is not NULL
+                            if 'score' in article and article['score'] is not None:
+                                article_info['score'] = article['score']
+                            
                             # Check if there's a corresponding audio file
                             audio_filename = article_filename.replace('.md', '.wav')
                             audio_response = supabase.table("content") \

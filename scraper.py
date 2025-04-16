@@ -1,3 +1,4 @@
+import math
 from playwright.sync_api import sync_playwright
 import json
 import os
@@ -10,7 +11,7 @@ import soundfile as sf
 import numpy as np
 # from f5_tts_mlx.generate import generate
 import base64
-from supabase_api import get_files_from_supabase, upload_content_to_supabase, ensure_storage_bucket
+from supabase_api import get_files_from_supabase, update_score_in_supabase, upload_content_to_supabase, ensure_storage_bucket
 from supabase import create_client
 from kokoro_api import generate_audio
 from unidecode import unidecode
@@ -24,10 +25,13 @@ load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Configure the custom AI API
-ENABLE_PROCESSING_WITH_CUSTOM_AI = True
+ENABLE_FILTERING_WITH_CUSTOM_AI = False
 ENABLE_UPLOAD_TO_BACKEND = True
+ENABLE_SCORING_WITH_CUSTOM_AI = True
+UPDATE_SCORES_WITH_CUSTOM_AI = False
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
-MODEL_NAME = "deepseek-r1-distill-qwen-7b"
+# MODEL_NAME = "deepseek-r1-distill-qwen-7b"
+MODEL_NAME = "claude-3.7-sonnet-reasoning-gemma3-12b"
 AI_TIMEOUT = 300  # 5 minutes timeout (increased from 3 minutes)
 AI_CHUNK_SIZE = 8192  # Buffer size for reading response
 
@@ -66,7 +70,7 @@ def check_api_availability():
 def test_api_functionality():
     """Test the API functionality by checking if it's available and content bucket exists."""
     
-    if ENABLE_PROCESSING_WITH_CUSTOM_AI:
+    if ENABLE_FILTERING_WITH_CUSTOM_AI or ENABLE_SCORING_WITH_CUSTOM_AI:
         # Check API availability and get models
         api_available, first_model = check_api_availability()
         if not api_available:
@@ -165,163 +169,6 @@ def extract_headlines(content):
         print("No headlines found. Content might need different parsing.")
     
     return headlines
-
-def filter_headlines_with_custom_ai(headlines):
-    """
-    Use custom AI API to filter out sports and vaccination related headlines.
-    """
-    print(f"Starting filtering process with {len(headlines)} headlines")
-    
-    prompt = f"""
-    You are a content filter. Your task is to:
-    
-    1. Review the following list of news headlines
-    2. Identify which headlines are related to sports or vaccination
-    3. Return ONLY a JSON array of the headlines that are NOT related to sports or vaccination
-    
-    Here are the headlines to review:
-    {json.dumps(headlines, indent=2)}
-    
-    Please return ONLY the JSON array of filtered headlines. Do not include any explanations or notes.
-    """
-    
-    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
-    print(f"Using model: {MODEL_NAME}")
-    print(f"Timeout set to {AI_TIMEOUT} seconds")
-    
-    try:
-        print("Sending request to custom AI API...")
-        start_time = time.time()
-        
-        # Use a session for better connection handling
-        with requests.Session() as session:
-            # Set a longer timeout for the connection and read operations
-            session.mount('http://', requests.adapters.HTTPAdapter(
-                max_retries=3,
-                pool_connections=10,
-                pool_maxsize=10
-            ))
-            
-            # Send the request with streaming enabled
-            response = session.post(
-                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
-                json={
-                    "model": MODEL_NAME,
-                    "messages": [
-                        {"role": "system", "content": "You are a content filter that specializes in identifying non-sports and non-vaccination related headlines."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.7,
-                    "max_tokens": 4000
-                },
-                timeout=AI_TIMEOUT,
-                stream=True  # Enable streaming to handle large responses
-            )
-            
-            # Check if the request was successful
-            response.raise_for_status()
-            
-            # Read the response in chunks
-            print("Reading response from custom AI API...")
-            response_content = ""
-            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
-                if chunk:
-                    response_content += chunk
-            
-            elapsed_time = time.time() - start_time
-            print(f"Received complete response from custom AI API in {elapsed_time:.2f} seconds")
-            print(f"Response length: {len(response_content)} characters")
-            
-            # Parse the response
-            try:
-                result = json.loads(response_content)
-            except json.JSONDecodeError as e:
-                print(f"Error parsing initial response: {e}")
-                print(f"Response preview: {response_content[:200]}...")
-                
-                # Try to extract JSON from the response
-                json_match = re.search(r'\{.*\}', response_content, re.DOTALL)
-                if json_match:
-                    try:
-                        result = json.loads(json_match.group(0))
-                        print("Successfully extracted JSON from response")
-                    except json.JSONDecodeError:
-                        print("Failed to parse extracted JSON")
-                        return headlines
-                else:
-                    print("Could not find JSON in response")
-                    return headlines
-        
-        if 'choices' in result and len(result['choices']) > 0:
-            print("Successfully processed headlines with custom AI")
-            filtered_headlines_text = result['choices'][0]['message']['content']
-            
-            # Try to parse the JSON response
-            try:
-                # Clean up the response to ensure it's valid JSON
-                filtered_headlines_text = filtered_headlines_text.strip()
-                
-                # Remove markdown code blocks if present
-                if filtered_headlines_text.startswith('```json'):
-                    filtered_headlines_text = filtered_headlines_text[7:]
-                if filtered_headlines_text.endswith('```'):
-                    filtered_headlines_text = filtered_headlines_text[:-3]
-                filtered_headlines_text = filtered_headlines_text.strip()
-                
-                # Try to parse the cleaned JSON
-                try:
-                    filtered_headlines = json.loads(filtered_headlines_text)
-                    print(f"Successfully parsed JSON with {len(filtered_headlines)} headlines")
-                    print(f"Filtered out {len(headlines) - len(filtered_headlines)} headlines (sports/vaccination related)")
-                    return filtered_headlines
-                except json.JSONDecodeError as inner_e:
-                    print(f"Error parsing cleaned JSON: {inner_e}")
-                    print(f"Cleaned response text: {filtered_headlines_text}")
-                    
-                    # Try an alternative approach - extract array content
-                    try:
-                        # Look for array content between square brackets
-                        array_match = re.search(r'\[(.*)\]', filtered_headlines_text, re.DOTALL)
-                        if array_match:
-                            array_content = array_match.group(1)
-                            # Split by commas and clean each item
-                            items = [item.strip().strip('"\'') for item in array_content.split(',')]
-                            # Filter out empty items
-                            items = [item for item in items if item]
-                            print(f"Extracted {len(items)} headlines using regex")
-                            print(f"Filtered out {len(headlines) - len(items)} headlines (sports/vaccination related)")
-                            return items
-                    except Exception as extract_e:
-                        print(f"Error extracting array content: {extract_e}")
-                    
-                    # If all parsing attempts fail, return original headlines
-                    return headlines
-            except json.JSONDecodeError as e:
-                print(f"Error parsing JSON response: {e}")
-                print(f"Response text: {filtered_headlines_text}")
-                return headlines  # Return all headlines if parsing fails
-        else:
-            print("Error: Unexpected response format from custom AI API")
-            print(f"Response: {json.dumps(result, indent=2)}")
-            return headlines  # Return all headlines if processing fails
-            
-    except requests.exceptions.ConnectionError:
-        print(f"Connection error: Could not connect to custom AI API at {CUSTOM_AI_ENDPOINT}")
-        print("Please ensure the API server is running and accessible")
-        return headlines  # Return all headlines if connection fails
-    except requests.exceptions.Timeout:
-        print(f"Timeout error: Custom AI API did not respond within {AI_TIMEOUT} seconds")
-        print("The API might be overloaded or experiencing issues")
-        return headlines  # Return all headlines if timeout occurs
-    except requests.exceptions.HTTPError as e:
-        print(f"HTTP error: {e}")
-        print(f"Status code: {e.response.status_code}")
-        print(f"Response: {e.response.text}")
-        return headlines  # Return all headlines if HTTP error occurs
-    except Exception as e:
-        print(f"Unexpected error when calling custom AI API: {type(e).__name__} - {e}")
-        return headlines  # Return all headlines if any other error occurs
-
 
 def split_content_by_topics(content, headlines, article_folder):
     """Split content into separate files based on headlines."""
@@ -458,9 +305,9 @@ def process_news_content(content, article_date: str):
             print(f"Error splitting content: {str(e)}")
             return False
 
-        if ENABLE_PROCESSING_WITH_CUSTOM_AI:
+        if ENABLE_FILTERING_WITH_CUSTOM_AI:
             # Filter articles with custom AI
-            process_articles_with_custom_ai(article_folder)
+            filter_articles_with_custom_ai(article_folder)
             
         if ENABLE_UPLOAD_TO_BACKEND:
             # Upload the filtered articles to Supabase
@@ -487,7 +334,7 @@ def get_article_files(article_folder: str, extension: str = ".md"):
     return [f for f in os.listdir(article_folder) if f.endswith(extension)] #[:5]
     
 
-def process_articles_with_custom_ai(article_folder: str):
+def filter_articles_with_custom_ai(article_folder: str):
     """Process the articles with custom AI."""
     article_files = get_article_files(article_folder)
 
@@ -511,9 +358,9 @@ def process_articles_with_custom_ai(article_folder: str):
         else:
             print(f"Keeping article: {article_file}")
             filtered_article_files.append(article_file)
-        
+
     print(f"Filtered articles. Kept {len(filtered_article_files)} out of {len(article_files)} articles.")
-        
+
 
 def upload_articles_to_supabase(date_str: str, article_folder):
     """Upload the filtered articles to Supabase."""
@@ -532,6 +379,11 @@ def upload_articles_to_supabase(date_str: str, article_folder):
             article_exists = any(f['name'] == article_file for f in files)
             if article_exists:
                 print(f"Article file already exists in Supabase for {article_file}")
+                if UPDATE_SCORES_WITH_CUSTOM_AI:
+                    print(f"Updating score for article file {article_file} in Supabase...")
+                    score = score_article_with_custom_ai(article_path)
+                    if score is not None:
+                        update_score_in_supabase(date_str, "article", article_file, score)
                 continue    
         except Exception as e:
             print(f"Error checking article file on Supabase: {str(e)}")
@@ -540,7 +392,10 @@ def upload_articles_to_supabase(date_str: str, article_folder):
         try:
             with open(article_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            success, url = upload_content_to_supabase(date_str, "article", article_file, content)
+
+            score = score_article_with_custom_ai(content) if ENABLE_SCORING_WITH_CUSTOM_AI else None
+            
+            success, url = upload_content_to_supabase(date_str, "article", article_file, content, score=score)
             if success:
                 print(f"Successfully uploaded {article_file} to Supabase: {url}")
             else:
@@ -551,10 +406,7 @@ def upload_articles_to_supabase(date_str: str, article_folder):
 
 def filter_article_with_custom_ai(article_content):
     """
-    Use custom AI API to check if article content is related to sports, pro-vaccination info,
-    or criminal violence in non-war zones.
-    
-    Returns True if article should be excluded (AI answered "yes"), False otherwise.
+    Use custom AI API process an article.
     """
     print("Checking article content with custom AI...")
 
@@ -565,7 +417,7 @@ def filter_article_with_custom_ai(article_content):
     Here the content to review:
     {article_content}    
     """
-    
+
     print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
     print(f"Using model: {MODEL_NAME}")
     
@@ -629,6 +481,85 @@ def filter_article_with_custom_ai(article_content):
     except Exception as e:
         print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
         return False  # Keep the article if there's an error
+
+
+def score_article_with_custom_ai(article_content):
+    """
+    Use custom AI API process an article.
+    """
+    print("Checking article content with custom AI...")
+
+    prompt = f"""
+    Please assign a political bias score to the content below. The score must range from -1.0 (indicating strongly left-leaning sources/framing) to +1.0 (indicating strongly right-leaning sources/framing), with 0.0 representing neutrality or balance.
+    Replay with the score number only, like the following: SCORE:-0.3 or SCORE:0.0 or SCORE:0.5 and do not append any comment after the score number.
+    
+    Here the content to review:
+    {article_content}    
+    """
+    
+    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
+    print(f"Using model: {MODEL_NAME}")
+    
+    try:
+        print("Sending request to custom AI API...")
+        start_time = time.time()
+        
+        # Use a session for better connection handling
+        with requests.Session() as session:
+            # Set a longer timeout for the connection and read operations
+            session.mount('http://', requests.adapters.HTTPAdapter(
+                max_retries=3,
+                pool_connections=10,
+                pool_maxsize=10
+            ))
+            
+            # Send the request with streaming enabled
+            response = session.post(
+                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
+                json={
+                    "model": MODEL_NAME,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,  # Lower temperature for more deterministic answers
+                    "max_tokens": -1
+                },
+                timeout=AI_TIMEOUT,
+                stream=True  # Enable streaming to handle large responses
+            )
+            
+            # Check if the request was successful
+            response.raise_for_status()
+            
+            # Read the response in chunks
+            print("Reading response from custom AI API...")
+            response_content = ""
+            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
+                if chunk:
+                    response_content += chunk
+            
+            elapsed_time = time.time() - start_time
+            print(f"Received response from custom AI API in {elapsed_time:.2f} seconds")
+            
+            # Parse the response
+            result = json.loads(response_content)
+            
+            if 'choices' in result and len(result['choices']) > 0:
+                answer_raw = result['choices'][0]['message']['content'].strip()
+                print(f"AI raw response: {answer_raw}")
+                answer = answer_raw.split("SCORE:")[1].strip()
+                answer = answer.split("\n")[0].strip()
+                print(f"AI response: {answer}")
+                
+                return float(answer)
+            else:
+                print("Error: Unexpected response format from custom AI API")
+                print(f"Response: {json.dumps(result, indent=2)}")
+                return None
+                
+    except Exception as e:
+        print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
+        return None
 
 def scrape_first_news_link(url: str, force_refresh: bool = False):
     """Scrape the first news link found on the page."""
@@ -789,18 +720,28 @@ def main():
     """Main function to run the scraper."""
 
     parser = argparse.ArgumentParser(description="A simple example script using argparse.")
-    parser.add_argument("--no-ai-filtering", action="store_true", help="Disable AI filtering")
+    parser.add_argument("--ai-filtering", action="store_true", help="Enable AI filtering")
     parser.add_argument("--no-supabase", action="store_true", help="Disable upload to supabase")
+    parser.add_argument("--no-scoring", action="store_true", help="Disable AI scoring")
+    parser.add_argument("--update-scores", action="store_true", help="Update AI scores")
     args = parser.parse_args()
 
-    global ENABLE_PROCESSING_WITH_CUSTOM_AI
+    global ENABLE_FILTERING_WITH_CUSTOM_AI
     global ENABLE_UPLOAD_TO_BACKEND
-    if args.no_ai_filtering:
-        ENABLE_PROCESSING_WITH_CUSTOM_AI = False
-        print("AI filtering disabled")
+    global ENABLE_SCORING_WITH_CUSTOM_AI
+    global UPDATE_SCORES_WITH_CUSTOM_AI
+    if args.ai_filtering:
+        ENABLE_FILTERING_WITH_CUSTOM_AI = True
+        print("AI filtering enabled")
     if args.no_supabase:
         ENABLE_UPLOAD_TO_BACKEND = False
         print("Upload to supabase disabled")
+    if args.no_scoring:
+        ENABLE_SCORING_WITH_CUSTOM_AI = False
+        print("AI scoring disabled")
+    if args.update_scores:
+        UPDATE_SCORES_WITH_CUSTOM_AI = True
+        print("Updating AI scores")
 
     try:
         print("Starting script...")

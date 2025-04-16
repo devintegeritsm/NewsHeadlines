@@ -380,10 +380,32 @@
                         articleTitle.textContent = article.title;
                         
                         articleTitleContainer.appendChild(articleTitle);
+                        
                         articleItem.appendChild(articleTitleContainer);
                         
                         const articleActions = document.createElement('div');
                         articleActions.className = 'flex space-x-3 text-sm mt-2';
+                        
+                        // Add political score if available - moved from title to before read button
+                        if (article.score !== undefined && article.score !== null) {
+                            const scoreElement = document.createElement('div');
+                            scoreElement.className = 'flex items-center px-2 py-1 rounded text-xs font-semibold mr-3';
+                            
+                            // Format score to 1 decimal place
+                            const formattedScore = parseFloat(article.score).toFixed(1);
+                            
+                            // Determine color based on score value
+                            if (article.score < -0.5) {
+                                scoreElement.className += ' bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+                            } else if (article.score > 0.5) {
+                                scoreElement.className += ' bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+                            } else {
+                                scoreElement.className += ' bg-gray-400 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+                            }
+                            
+                            scoreElement.innerHTML = `<i class="fas fa-balance-scale mr-1"></i> Political Score: ${formattedScore}`;
+                            articleActions.appendChild(scoreElement);
+                        }
                         
                         // Add read button
                         const readButton = document.createElement('button');
@@ -453,6 +475,31 @@
             
             // Clear previous actions
             articleActionsElement.innerHTML = '';
+            
+            // Fetch the score if it exists (need to get the article data from the UI since we don't pass it in the function)
+            const headlines = document.getElementById('headlines');
+            const articleCards = headlines.querySelectorAll('.headline-card');
+            let scoreElement = null;
+            
+            // Look through the cards to find our article by title
+            for (const card of articleCards) {
+                const articleItems = card.querySelectorAll('li');
+                for (const item of articleItems) {
+                    const titleElem = item.querySelector('.text-lg');
+                    if (titleElem && titleElem.textContent === title) {
+                        // Check if this article has a score
+                        const existingScore = item.querySelector('[class*="bg-red-100"], [class*="bg-blue-100"], [class*="bg-gray-100"]');
+                        if (existingScore) {
+                            scoreElement = document.createElement('div');
+                            scoreElement.className = existingScore.className;
+                            scoreElement.innerHTML = existingScore.innerHTML;
+                            articleActionsElement.appendChild(scoreElement);
+                        }
+                        break;
+                    }
+                }
+                if (scoreElement) break;
+            }
             
             // Add audio player if audio URL is provided
             if (audioUrl) {
@@ -576,7 +623,7 @@
                 .replace(/&#x27;/g, "'")
                 .replace(/&#x27;/g, "'")
                 .replace(/&#x2019;/g, "'")
-                .replace(/â/g, "'")
+                .replace(/â[^\\x00-\\x7F]/g, "'")
                 ;
             
             // Basic markdown formatting

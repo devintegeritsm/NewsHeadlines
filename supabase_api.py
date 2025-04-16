@@ -77,7 +77,14 @@ def ensure_content_table():
         else:
             raise e
 
-def upload_content_to_supabase(date_str: str, content_type: str, filename: str, content: Union[str, bytes], is_binary: bool = False) -> Tuple[bool, Optional[str]]:
+def update_score_in_supabase(date_str: str, content_type: str, filename: str, score: float):
+    """Update the score of a content record in the content table."""
+    try:
+        supabase_admin.table("content").update({"score": score}).eq("date", date_str).eq("content_type", content_type).eq("filename", filename).execute()
+    except Exception as e:
+        print(f"Error updating score in Supabase: {e}")
+
+def upload_content_to_supabase(date_str: str, content_type: str, filename: str, content: Union[str, bytes], is_binary: bool = False, score: Optional[float] = None) -> Tuple[bool, Optional[str]]:
     """
     Upload content to Supabase storage and create a record in the content table.
     
@@ -155,6 +162,9 @@ def upload_content_to_supabase(date_str: str, content_type: str, filename: str, 
                     "generated_at": datetime.now().isoformat()
                 }
             }
+
+            if score is not None:
+                content_record["score"] = score
             
             # Insert into content table using admin client
             supabase_admin.table("content").insert(content_record).execute()

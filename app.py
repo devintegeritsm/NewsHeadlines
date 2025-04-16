@@ -238,11 +238,15 @@ def get_content(date, content_type, filename):
             # If it's an HTML or Markdown file, serve it directly with proper content type
             if actual_filename.endswith('.html') or actual_filename.endswith('.md'):
                 try:
-                    content = requests.get(url).text
-                    logger.info("Successfully fetched content")
+
+                    # content = requests.get(url).text
+                    response = requests.get(url)
+                    response.encoding = 'utf-8'  # set to the correct encoding
+                    content = response.text
                     
                     # Set appropriate content type based on file extension
-                    content_type = 'text/html' if actual_filename.endswith('.html') else 'text/markdown'
+                    # content_type = 'text/html' if actual_filename.endswith('.html') else 'text/markdown'
+                    content_type = 'text/html'
                     return content, 200, {
                         'Content-Type': f'{content_type}; charset=utf-8',
                         'Content-Disposition': 'inline'

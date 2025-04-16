@@ -213,6 +213,10 @@
         .dark-theme .audio-player audio {
             filter: invert(85%);
         }
+        /* Political score styling */
+        .political-score {
+            margin-left: 0px;
+        }
     </style>
 </head>
 <body>
@@ -402,6 +406,7 @@
                             } else {
                                 scoreElement.className += ' bg-primary text-gray-300';
                             }
+                            scoreElement.className += ' .political-score'
                             
                             scoreElement.innerHTML = `<i class="fas fa-balance-scale mr-1"></i> Political Score: ${formattedScore}`;
                             articleActions.appendChild(scoreElement);
@@ -488,12 +493,13 @@
                     const titleElem = item.querySelector('.text-lg');
                     if (titleElem && titleElem.textContent === title) {
                         // Check if this article has a score
-                        const existingScore = item.querySelector('[class*="bg-red-100"], [class*="bg-blue-100"], [class*="bg-gray-100"]');
+                        const existingScore = item.querySelector('[class*="political-score"]');
                         if (existingScore) {
                             scoreElement = document.createElement('div');
-                            scoreElement.className = existingScore.className;
-                            scoreElement.innerHTML = existingScore.innerHTML;
-                            articleActionsElement.appendChild(scoreElement);
+                            scoreElement.className = 'political-score ' + existingScore.className;
+                            scoreElement.textContent = existingScore.textContent;
+                            // scoreElement.style.marginLeft = '10px';
+                            articleDateElement.appendChild(scoreElement);
                         }
                         break;
                     }
@@ -575,7 +581,8 @@
             try {
                 // Fetch the article content
                 const response = await fetch(articleUrl);
-                const articleContent = await response.text();
+                // const articleContent = await response.text();
+                let articleContent = await response.text();
                 
                 // Process markdown content
                 const formattedContent = formatMarkdown(articleContent);
@@ -613,21 +620,20 @@
         // Helper function to format markdown content
         function formatMarkdown(markdown) {
             // Decode HTML entities first
-            let decodedMarkdown = markdown
-                .replace(/&apos;/g, "'")
-                .replace(/&quot;/g, '"')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&amp;/g, '&')
-                .replace(/&#39;/g, "'")
-                .replace(/&#x27;/g, "'")
-                .replace(/&#x27;/g, "'")
-                .replace(/&#x2019;/g, "'")
-                .replace(/â[^\\x00-\\x7F]/g, "'")
-                ;
-            
+            // let decodedMarkdown = markdown
+            //     .replace(/&apos;/g, "'")
+            //     .replace(/&quot;/g, '"')
+            //     .replace(/&lt;/g, '<')
+            //     .replace(/&gt;/g, '>')
+            //     .replace(/&amp;/g, '&')
+            //     .replace(/&#39;/g, "'")
+            //     .replace(/&#x27;/g, "'")
+            //     .replace(/&#x27;/g, "'")
+            //     .replace(/&#x2019;/g, "'")
+            //     ;
+
             // Basic markdown formatting
-            let html = decodedMarkdown
+            let html = markdown
                 // Headers
                 .replace(/^# (.*$)/gm, '<h1>$1</h1>')
                 .replace(/^## (.*$)/gm, '<h2>$1</h2>')

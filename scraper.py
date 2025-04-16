@@ -491,7 +491,7 @@ def score_article_with_custom_ai(article_content):
 
     prompt = f"""
     Please assign a political bias score to the content below. The score must range from -1.0 (indicating strongly left-leaning sources/framing) to +1.0 (indicating strongly right-leaning sources/framing), with 0.0 representing neutrality or balance.
-    Replay with the score number only, like the following: SCORE:-0.3 or SCORE:0.0 or SCORE:0.5 and do not append any comment after the score number.
+    Replay with the score number, like the following: SCORE:-0.3 or SCORE:0.0 or SCORE:0.5 and do not append any comment after.
     
     Here the content to review:
     {article_content}    

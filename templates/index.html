@@ -395,12 +395,12 @@
                             const formattedScore = parseFloat(article.score).toFixed(1);
                             
                             // Determine color based on score value
-                            if (article.score < -0.5) {
-                                scoreElement.className += ' bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-                            } else if (article.score > 0.5) {
-                                scoreElement.className += ' bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
+                            if (article.score <= -0.5) {
+                                scoreElement.className += ' bg-primary text-blue-200';
+                            } else if (article.score >= 0.5) {
+                                scoreElement.className += ' bg-primary text-red-200';
                             } else {
-                                scoreElement.className += ' bg-gray-400 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+                                scoreElement.className += ' bg-primary text-gray-300';
                             }
                             
                             scoreElement.innerHTML = `<i class="fas fa-balance-scale mr-1"></i> Political Score: ${formattedScore}`;

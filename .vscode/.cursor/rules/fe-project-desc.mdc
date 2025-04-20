@@ -1,0 +1,13 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+This is a news app - the front-end part of project, which includes app.py and template/index.html
+Basic overview:
+The main page displays a date card with number of articles found in supabase for that date.
+If no articles found no date card will be shown.
+On a date card there is a button "Show Articles" which shows article headlines available and links to read and listen (if audio available)
+Please read all needed files to understand project properly before start doing anything.
+
+

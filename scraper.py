@@ -16,6 +16,7 @@ from supabase import create_client
 from kokoro_api import generate_audio
 from unidecode import unidecode
 import argparse
+from typing import Tuple, Optional
 
 
 # Load environment variables from .env file
@@ -25,6 +26,7 @@ load_dotenv()
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 
 # Configure the custom AI API
+REFRESH_NEWS_CONTENT = False
 ENABLE_FILTERING_WITH_CUSTOM_AI = False
 ENABLE_UPLOAD_TO_BACKEND = True
 ENABLE_SCORING_WITH_CUSTOM_AI = True
@@ -32,6 +34,7 @@ UPDATE_SCORES_WITH_CUSTOM_AI = False
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
 # MODEL_NAME = "deepseek-r1-distill-qwen-7b"
 MODEL_NAME = "claude-3.7-sonnet-reasoning-gemma3-12b"
+# MODEL_NAME = "deepseek-r1-distill-qwen-14b"
 AI_TIMEOUT = 300  # 5 minutes timeout (increased from 3 minutes)
 AI_CHUNK_SIZE = 8192  # Buffer size for reading response
 
@@ -270,8 +273,9 @@ def clean_html_tags(content):
     
     return content
 
-def process_news_content(content, article_date: str):
-    """Process the news content and generate all necessary files."""
+
+def parse_news_content(content, article_date: str):
+    """Parse the news content and generate all necessary files."""
     try:
         # Clean HTML tags from content
         content = clean_html_tags(content)
@@ -304,6 +308,17 @@ def process_news_content(content, article_date: str):
         except Exception as e:
             print(f"Error splitting content: {str(e)}")
             return False
+
+        return True
+    except Exception as e:
+        print(f"Error parsing news content: {str(e)}")
+        return False
+    
+
+def process_news_content(article_date: str):
+    """Process the news content and generate all necessary files."""
+    try:
+        article_folder = get_date_based_filename(article_date, "article", "")
 
         if ENABLE_FILTERING_WITH_CUSTOM_AI:
             # Filter articles with custom AI
@@ -374,16 +389,22 @@ def upload_articles_to_supabase(date_str: str, article_folder):
     for article_file in article_files:
         article_path = os.path.join(article_folder, article_file)
 
-        print(f"Precessing article file {article_file}...")
+        print(f"Processing article file {article_file}...")
         try:
             article_exists = any(f['name'] == article_file for f in files)
             if article_exists:
                 print(f"Article file already exists in Supabase for {article_file}")
                 if UPDATE_SCORES_WITH_CUSTOM_AI:
-                    print(f"Updating score for article file {article_file} in Supabase...")
-                    score = score_article_with_custom_ai(article_path)
-                    if score is not None:
-                        update_score_in_supabase(date_str, "article", article_file, score)
+                    print(f"Updating score for article {article_file}...")
+                    try:
+                        with open(article_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                            (score, reason) = score_article_with_custom_ai(content)
+                            if score is not None:
+                                update_score_in_supabase(date_str, "article", article_file, score=score, reason=reason)
+                    except Exception as e:
+                        print(f"Error updating score for article file {article_file} in Supabase: {str(e)}")
+
                 continue    
         except Exception as e:
             print(f"Error checking article file on Supabase: {str(e)}")
@@ -393,9 +414,9 @@ def upload_articles_to_supabase(date_str: str, article_folder):
             with open(article_path, 'r', encoding='utf-8') as f:
                 content = f.read()
 
-            score = score_article_with_custom_ai(content) if ENABLE_SCORING_WITH_CUSTOM_AI else None
-            
-            success, url = upload_content_to_supabase(date_str, "article", article_file, content, score=score)
+            title = content.split('\n')[0].strip()
+            (score, reason) = score_article_with_custom_ai(content) if ENABLE_SCORING_WITH_CUSTOM_AI else (None, None)
+            success, url = upload_content_to_supabase(date_str, "article", article_file, title=title, content=content, score=score, reason=reason)
             if success:
                 print(f"Successfully uploaded {article_file} to Supabase: {url}")
             else:
@@ -408,7 +429,7 @@ def filter_article_with_custom_ai(article_content):
     """
     Use custom AI API process an article.
     """
-    print("Checking article content with custom AI...")
+    print("Assessing article content with custom AI...")
 
     prompt = f"""
     You are a content filter that checks if articles are related to any kind of sports or pro-vaccination. 
@@ -483,15 +504,19 @@ def filter_article_with_custom_ai(article_content):
         return False  # Keep the article if there's an error
 
 
-def score_article_with_custom_ai(article_content):
+def score_article_with_custom_ai(article_content) -> Tuple[Optional[float], Optional[str]]:
     """
     Use custom AI API process an article.
     """
-    print("Checking article content with custom AI...")
+    print("Assesing article content with custom AI...")
 
     prompt = f"""
-    Please assign a political bias score to the content below. The score must range from -1.0 (indicating strongly left-leaning sources/framing) to +1.0 (indicating strongly right-leaning sources/framing), with 0.0 representing neutrality or balance.
-    Replay with the score number, like the following: SCORE:-0.3 or SCORE:0.0 or SCORE:0.5 and do not append any comment after.
+    You are a independent editor-in-chief doing a news article content review.
+    Please carefully read the whole article content below, not just an article title.
+    After analysis, please assign a political bias score to the content. 
+    The score must range from -1.0 (indicating strongly left-leaning framing) to +1.0 (indicating strongly right-leaning framing), with 0.0 representing neutrality or balance.
+    Replay on a separate line with the 'SCORE:' followed by a score float value, like one of the following: 'SCORE:-0.3' or 'SCORE:0.0' or 'SCORE:0.5'. 
+    Then add a comment why you assigned the score you did.
     
     Here the content to review:
     {article_content}    
@@ -547,19 +572,41 @@ def score_article_with_custom_ai(article_content):
             if 'choices' in result and len(result['choices']) > 0:
                 answer_raw = result['choices'][0]['message']['content'].strip()
                 print(f"AI raw response: {answer_raw}")
-                answer = answer_raw.split("SCORE:")[1].strip()
-                answer = answer.split("\n")[0].strip()
-                print(f"AI response: {answer}")
-                
-                return float(answer)
+                # answer = answer_raw.split("SCORE:")[1].strip()
+                # answer = answer.split("\n")[0].strip()
+
+                score_line = answer_raw.split("SCORE:")
+                if len(score_line) <= 1:
+                    score_line = answer_raw.split("Score:")
+                if len(score_line) <= 1:
+                    score_line = answer_raw.split("score:")
+
+                answer_s = score_line[1].split("\n")[0].strip("*").strip()
+                try:
+                    answer = float(answer_s)
+                except Exception as e:
+                    print(f"Error converting score to float: {e}")
+                    return None, None
+                    
+                print(f"*** AI score: {answer}")
+                reason_text = answer_raw.split("</think>")
+                reason = reason_text[1] if len(reason_text) > 1 else answer_raw
+                if reason.startswith("Ok"):
+                    reason_text = reason.split("\n",1)
+                    if len(reason_text) > 1:
+                        reason = reason_text[1]
+                reason = reason.strip()
+                print(f"*** AI reason: {reason}")
+                print(f"***")
+                return answer, reason
             else:
                 print("Error: Unexpected response format from custom AI API")
                 print(f"Response: {json.dumps(result, indent=2)}")
-                return None
+                return None, None
                 
     except Exception as e:
         print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
-        return None
+        return None, None
 
 def scrape_first_news_link(url: str, force_refresh: bool = False):
     """Scrape the first news link found on the page."""
@@ -608,7 +655,7 @@ def scrape_first_news_link(url: str, force_refresh: bool = False):
                 if os.path.exists(content_file) and not force_refresh:
                     print(f"Content already exists for {article_date}")
                     browser.close()
-                    return True
+                    return process_news_content(article_date)
                 
                 # Navigate to the article
                 print(f"Navigating to the first news link: {article_url}")
@@ -625,7 +672,7 @@ def scrape_first_news_link(url: str, force_refresh: bool = False):
                 browser.close()
                 
                 # Process the content
-                return process_news_content(content, article_date)
+                return parse_news_content(content, article_date) and process_news_content(article_date)
             else:
                 print("No news links found on the page.")
                 browser.close()
@@ -653,7 +700,7 @@ def generate_audio_for_articles(date_str: str, article_folder: str, provider: st
             audio_file = article_path.replace('.md', TTS_OUTPUT_FORMAT)
                 
             audio_filename = os.path.basename(audio_file)
-            print(f"Precessing audio file {audio_filename}...")
+            print(f"Processing audio file {audio_filename}...")
             # Skip if audio file already exists in Supabase
             try:
                 # List files in the audio directory
@@ -697,6 +744,7 @@ def generate_audio_for_articles(date_str: str, article_folder: str, provider: st
                         date_str=date_str,
                         content_type="audio",
                         filename=audio_filename,
+                        title=None,
                         content=audio_data,
                         is_binary=True
                     )
@@ -720,16 +768,22 @@ def main():
     """Main function to run the scraper."""
 
     parser = argparse.ArgumentParser(description="A simple example script using argparse.")
+    parser.add_argument("--refresh-news-content", action="store_true", help="Refresh news content")
     parser.add_argument("--ai-filtering", action="store_true", help="Enable AI filtering")
     parser.add_argument("--no-supabase", action="store_true", help="Disable upload to supabase")
     parser.add_argument("--no-scoring", action="store_true", help="Disable AI scoring")
     parser.add_argument("--update-scores", action="store_true", help="Update AI scores")
     args = parser.parse_args()
 
+    global REFRESH_NEWS_CONTENT
     global ENABLE_FILTERING_WITH_CUSTOM_AI
     global ENABLE_UPLOAD_TO_BACKEND
     global ENABLE_SCORING_WITH_CUSTOM_AI
     global UPDATE_SCORES_WITH_CUSTOM_AI
+    
+    if args.refresh_news_content:
+        REFRESH_NEWS_CONTENT = True
+        print("Refreshing news content")
     if args.ai_filtering:
         ENABLE_FILTERING_WITH_CUSTOM_AI = True
         print("AI filtering enabled")
@@ -754,7 +808,7 @@ def main():
             return
         
         # Scrape the first news link with force_refresh=True
-        result = scrape_first_news_link("https://news.iliane.xyz/briefs", force_refresh=True)
+        result = scrape_first_news_link("https://news.iliane.xyz/briefs", force_refresh=REFRESH_NEWS_CONTENT)
         if result:
             print("Script finished successfully.")
         else:

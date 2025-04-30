@@ -17,13 +17,14 @@ from kokoro_api import generate_audio
 from unidecode import unidecode
 import argparse
 from typing import Tuple, Optional
-
+import lmstudio as lms
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Initialize Supabase client
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+model_for_scoring = None
 
 # Configure the custom AI API
 REFRESH_NEWS_CONTENT = False
@@ -31,10 +32,12 @@ ENABLE_FILTERING_WITH_CUSTOM_AI = False
 ENABLE_UPLOAD_TO_BACKEND = True
 ENABLE_SCORING_WITH_CUSTOM_AI = True
 UPDATE_SCORES_WITH_CUSTOM_AI = False
+UPDATE_SCORES_WITH_CUSTOM_AI = True
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
 # MODEL_NAME = "deepseek-r1-distill-qwen-7b"
-MODEL_NAME = "claude-3.7-sonnet-reasoning-gemma3-12b"
 # MODEL_NAME = "deepseek-r1-distill-qwen-14b"
+# MODEL_NAME = "claude-3.7-sonnet-reasoning-gemma3-12b"
+MODEL_NAME = "dolphin3.0-r1-mistral-24b"
 AI_TIMEOUT = 300  # 5 minutes timeout (increased from 3 minutes)
 AI_CHUNK_SIZE = 8192  # Buffer size for reading response
 
@@ -44,47 +47,21 @@ AI_CHUNK_SIZE = 8192  # Buffer size for reading response
 TTS_PROVIDER = "kokoro"
 TTS_OUTPUT_FORMAT = ".wav"
 
-# Function to check API availability and get available models
-def check_api_availability():
-    """Check if the API is available and get available models."""
-    print(f"Checking LocalAPI availability at {CUSTOM_AI_ENDPOINT}...")
     
-    try:
-        response = requests.get(f"{CUSTOM_AI_ENDPOINT}/v1/models", timeout=10)
-        
-        if response.status_code == 200:
-            models_data = response.json()
-            if 'data' in models_data and len(models_data['data']) > 0:
-                # Get the first model from the list
-                first_model = models_data['data'][0]['id']
-                print(f"LocalAPI is available. First available model: {first_model}")
-                return True, first_model
-            else:
-                print("LocalAPI is available but no models found.")
-                return True, None
-        else:
-            print(f"LocalAPI check failed with status code: {response.status_code}")
-            return False, None
-    except Exception as e:
-        print(f"Local API availability check failed with error: {str(e)}")
-        return False, None
+def load_local_lms_model():
+    """Load the model."""
+    global model_for_scoring
+    model_for_scoring = lms.llm(
+        model_key=MODEL_NAME,
+        config={
+            "contextLength": 32768,
+        }
+    )
+    print(f"Local LM Studio Model loaded: {model_for_scoring}")
 
 # Function to test the API functionality
 def test_api_functionality():
     """Test the API functionality by checking if it's available and content bucket exists."""
-    
-    if ENABLE_FILTERING_WITH_CUSTOM_AI or ENABLE_SCORING_WITH_CUSTOM_AI:
-        # Check API availability and get models
-        api_available, first_model = check_api_availability()
-        if not api_available:
-            return False
-    
-        # Update MODEL_NAME with the first available model if found
-        # if first_model:
-        #     global MODEL_NAME
-        #     MODEL_NAME = first_model
-
-        print(f"Local API is available. Using model: {MODEL_NAME}")
     
     if ENABLE_UPLOAD_TO_BACKEND:
         print("Testing remote API is available...")
@@ -111,21 +88,9 @@ def get_date_based_filename(date_str: str, suffix="", extension=".md"):
     
     return f"{date_str}{suffix}{extension}"
 
-def get_article_folder_name(date_str: str):
-    """Generate a folder name based on the article date."""
-    return f"{date_str}-article"
-
 def file_exists(filename):
     """Check if a file exists."""
     return os.path.exists(filename)
-
-def create_folder(folder_name):
-    """Create a folder if it doesn't exist."""
-    if not os.path.exists(folder_name):
-        os.makedirs(folder_name)
-        print(f"Created folder: {folder_name}")
-        return True
-    return False
 
 def extract_headlines(content):
     """
@@ -314,7 +279,6 @@ def parse_news_content(content, article_date: str):
         print(f"Error parsing news content: {str(e)}")
         return False
     
-
 def process_news_content(article_date: str):
     """Process the news content and generate all necessary files."""
     try:
@@ -322,8 +286,9 @@ def process_news_content(article_date: str):
 
         if ENABLE_FILTERING_WITH_CUSTOM_AI:
             # Filter articles with custom AI
-            filter_articles_with_custom_ai(article_folder)
-            
+            # filter_articles_with_custom_ai(article_folder)
+            raise Exception("Not implemented")
+        
         if ENABLE_UPLOAD_TO_BACKEND:
             # Upload the filtered articles to Supabase
             upload_articles_to_supabase(article_date, article_folder)
@@ -349,34 +314,6 @@ def get_article_files(article_folder: str, extension: str = ".md"):
     return [f for f in os.listdir(article_folder) if f.endswith(extension)] #[:5]
     
 
-def filter_articles_with_custom_ai(article_folder: str):
-    """Process the articles with custom AI."""
-    article_files = get_article_files(article_folder)
-
-    filtered_article_files = []
-
-    print(f"Filtering {len(article_files)} articles with custom AI...")
-    for article_file in article_files:
-        article_path = os.path.join(article_folder, article_file)
-        
-        # Read article content
-        with open(article_path, 'r', encoding='utf-8') as f:
-            article_content = f.read()
-        
-        # Filter article
-        should_exclude = filter_article_with_custom_ai(article_content)
-        
-        if should_exclude:
-            print(f"Excluding article: {article_file} (matches exclusion criteria)")
-            # Remove the file as it's excluded
-            os.remove(article_path)
-        else:
-            print(f"Keeping article: {article_file}")
-            filtered_article_files.append(article_file)
-
-    print(f"Filtered articles. Kept {len(filtered_article_files)} out of {len(article_files)} articles.")
-
-
 def upload_articles_to_supabase(date_str: str, article_folder):
     """Upload the filtered articles to Supabase."""
 
@@ -399,7 +336,8 @@ def upload_articles_to_supabase(date_str: str, article_folder):
                     try:
                         with open(article_path, 'r', encoding='utf-8') as f:
                             content = f.read()
-                            (score, reason) = score_article_with_custom_ai(content)
+                            # (score, reason) = score_article_with_custom_ai(content)
+                            (score, reason) = score_article_with_lms(content)
                             if score is not None:
                                 update_score_in_supabase(date_str, "article", article_file, score=score, reason=reason)
                     except Exception as e:
@@ -415,7 +353,8 @@ def upload_articles_to_supabase(date_str: str, article_folder):
                 content = f.read()
 
             title = content.split('\n')[0].strip()
-            (score, reason) = score_article_with_custom_ai(content) if ENABLE_SCORING_WITH_CUSTOM_AI else (None, None)
+            # (score, reason) = score_article_with_custom_ai(content) if ENABLE_SCORING_WITH_CUSTOM_AI else (None, None)
+            (score, reason) = score_article_with_lms(content) if ENABLE_SCORING_WITH_CUSTOM_AI else (None, None)
             success, url = upload_content_to_supabase(date_str, "article", article_file, title=title, content=content, score=score, reason=reason)
             if success:
                 print(f"Successfully uploaded {article_file} to Supabase: {url}")
@@ -424,91 +363,11 @@ def upload_articles_to_supabase(date_str: str, article_folder):
         except Exception as e:
             print(f"Error uploading {article_file} to Supabase: {str(e)}")
 
-
-def filter_article_with_custom_ai(article_content):
+def score_article_with_lms(article_content) -> Tuple[Optional[float], Optional[str]]:
     """
-    Use custom AI API process an article.
+    Use local LM Studio to process an article.
     """
-    print("Assessing article content with custom AI...")
-
-    prompt = f"""
-    You are a content filter that checks if articles are related to any kind of sports or pro-vaccination. 
-    Answer only YES or NO like the following: ANSWER:YES or ANSWER:NO
-    
-    Here the content to review:
-    {article_content}    
-    """
-
-    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
-    print(f"Using model: {MODEL_NAME}")
-    
-    try:
-        print("Sending request to custom AI API...")
-        start_time = time.time()
-        
-        # Use a session for better connection handling
-        with requests.Session() as session:
-            # Set a longer timeout for the connection and read operations
-            session.mount('http://', requests.adapters.HTTPAdapter(
-                max_retries=3,
-                pool_connections=10,
-                pool_maxsize=10
-            ))
-            
-            # Send the request with streaming enabled
-            response = session.post(
-                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
-                json={
-                    "model": MODEL_NAME,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,  # Lower temperature for more deterministic answers
-                    "max_tokens": -1
-                },
-                timeout=AI_TIMEOUT,
-                stream=True  # Enable streaming to handle large responses
-            )
-            
-            # Check if the request was successful
-            response.raise_for_status()
-            
-            # Read the response in chunks
-            print("Reading response from custom AI API...")
-            response_content = ""
-            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
-                if chunk:
-                    response_content += chunk
-            
-            elapsed_time = time.time() - start_time
-            print(f"Received response from custom AI API in {elapsed_time:.2f} seconds")
-            
-            # Parse the response
-            result = json.loads(response_content)
-            
-            if 'choices' in result and len(result['choices']) > 0:
-                answer_raw = result['choices'][0]['message']['content'].strip()
-                print(f"AI raw response: {answer_raw}")
-                answer = answer_raw.split("ANSWER:")[1].strip()
-                print(f"AI response: {answer}")
-                
-                # Return True if the answer is YES (exclude the article)
-                return "YES" in answer
-            else:
-                print("Error: Unexpected response format from custom AI API")
-                print(f"Response: {json.dumps(result, indent=2)}")
-                return False  # Keep the article if there's an error
-                
-    except Exception as e:
-        print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
-        return False  # Keep the article if there's an error
-
-
-def score_article_with_custom_ai(article_content) -> Tuple[Optional[float], Optional[str]]:
-    """
-    Use custom AI API process an article.
-    """
-    print("Assesing article content with custom AI...")
+    print("Assesing article content with LM Studio...")
 
     prompt = f"""
     You are a independent editor-in-chief doing a news article content review.
@@ -521,91 +380,50 @@ def score_article_with_custom_ai(article_content) -> Tuple[Optional[float], Opti
     Here the content to review:
     {article_content}    
     """
-    
-    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
+
     print(f"Using model: {MODEL_NAME}")
     
     try:
-        print("Sending request to custom AI API...")
         start_time = time.time()
-        
-        # Use a session for better connection handling
-        with requests.Session() as session:
-            # Set a longer timeout for the connection and read operations
-            session.mount('http://', requests.adapters.HTTPAdapter(
-                max_retries=3,
-                pool_connections=10,
-                pool_maxsize=10
-            ))
-            
-            # Send the request with streaming enabled
-            response = session.post(
-                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
-                json={
-                    "model": MODEL_NAME,
-                    "messages": [
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": 0.3,  # Lower temperature for more deterministic answers
-                    "max_tokens": -1
-                },
-                timeout=AI_TIMEOUT,
-                stream=True  # Enable streaming to handle large responses
-            )
-            
-            # Check if the request was successful
-            response.raise_for_status()
-            
-            # Read the response in chunks
-            print("Reading response from custom AI API...")
-            response_content = ""
-            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
-                if chunk:
-                    response_content += chunk
-            
-            elapsed_time = time.time() - start_time
-            print(f"Received response from custom AI API in {elapsed_time:.2f} seconds")
-            
-            # Parse the response
-            result = json.loads(response_content)
-            
-            if 'choices' in result and len(result['choices']) > 0:
-                answer_raw = result['choices'][0]['message']['content'].strip()
-                print(f"AI raw response: {answer_raw}")
-                # answer = answer_raw.split("SCORE:")[1].strip()
-                # answer = answer.split("\n")[0].strip()
+        result = model_for_scoring.respond(prompt)
+        elapsed_time = time.time() - start_time
+        print(f"Received response from local LM Studio in {elapsed_time:.2f} seconds")
 
-                score_line = answer_raw.split("SCORE:")
-                if len(score_line) <= 1:
-                    score_line = answer_raw.split("Score:")
-                if len(score_line) <= 1:
-                    score_line = answer_raw.split("score:")
+        answer_raw = result.content
+        print(f"AI raw response: {answer_raw}") 
 
-                answer_s = score_line[1].split("\n")[0].strip("*").strip()
-                try:
-                    answer = float(answer_s)
-                except Exception as e:
-                    print(f"Error converting score to float: {e}")
+        reason_text = answer_raw.split("</think>")
+        reason = reason_text[1] if len(reason_text) > 1 else answer_raw   
+            
+        score_line = reason.split("SCORE:")
+        if len(score_line) <= 1:
+            score_line = reason.split("Score:")
+            if len(score_line) <= 1:
+                score_line = reason.split("score:")
+                if len(score_line) <= 1:
+                    print(f"Error extracting score from AI response: {answer_raw}")
                     return None, None
-                    
-                print(f"*** AI score: {answer}")
-                reason_text = answer_raw.split("</think>")
-                reason = reason_text[1] if len(reason_text) > 1 else answer_raw
-                if reason.startswith("Ok"):
-                    reason_text = reason.split("\n",1)
-                    if len(reason_text) > 1:
-                        reason = reason_text[1]
-                reason = reason.strip()
-                print(f"*** AI reason: {reason}")
-                print(f"***")
-                return answer, reason
-            else:
-                print("Error: Unexpected response format from custom AI API")
-                print(f"Response: {json.dumps(result, indent=2)}")
-                return None, None
+
+        answer_s = score_line[1].split("\n")[0].strip("*").strip()
+        try:
+            answer = float(answer_s.strip("*"))
+        except Exception as e:
+            print(f"Error converting score to float: {e}")
+            return None, None
+            
+        print(f"*** AI score: {answer}")
+        
+        if reason.startswith("Ok") or reason.startswith("Okay"):
+            reason_text = reason.split("\n",1)
+            if len(reason_text) > 1:
+                reason = reason_text[1]
+        reason = reason.strip()
+        print(f"*** AI reason: {reason}")
+        print(f"***")
+        return answer, reason
                 
     except Exception as e:
-        print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
+        print(f"Error when calling local LM Studio: {type(e).__name__} - {e}")
         return None, None
 
 def scrape_first_news_link(url: str, force_refresh: bool = False):
@@ -806,6 +624,10 @@ def main():
         if not api_test_success:
             print("API test failed. Exiting script.")
             return
+        
+        if ENABLE_FILTERING_WITH_CUSTOM_AI or ENABLE_SCORING_WITH_CUSTOM_AI:
+            # Load Local LM Studio
+            load_local_lms_model()
         
         # Scrape the first news link with force_refresh=True
         result = scrape_first_news_link("https://news.iliane.xyz/briefs", force_refresh=REFRESH_NEWS_CONTENT)

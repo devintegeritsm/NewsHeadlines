@@ -1,0 +1,294 @@
+
+
+def get_article_folder_name(date_str: str):
+    """Generate a folder name based on the article date."""
+    return f"{date_str}-article"
+
+def create_folder(folder_name):
+    """Create a folder if it doesn't exist."""
+    if not os.path.exists(folder_name):
+        os.makedirs(folder_name)
+        print(f"Created folder: {folder_name}")
+        return True
+    return False
+
+# Function to check API availability and get available models
+def check_api_availability():
+    """Check if the API is available and get available models."""
+    print(f"Checking LocalAPI availability at {CUSTOM_AI_ENDPOINT}...")
+    
+    try:
+        response = requests.get(f"{CUSTOM_AI_ENDPOINT}/v1/models", timeout=10)
+        if response.status_code == 200:
+            return True
+        else:
+            print(f"Local API check failed with status code: {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"Local API availability check failed with error: {str(e)}")
+        return False
+
+def test_api_functionality():
+    """Test the API functionality by checking if it's available and content bucket exists."""
+    
+    if ENABLE_FILTERING_WITH_CUSTOM_AI or ENABLE_SCORING_WITH_CUSTOM_AI:
+        # Check API availability and get models
+        api_available = check_api_availability()
+        if not api_available:
+            return False
+        print(f"Local API is available. Using model: {MODEL_NAME}")
+
+    
+    if ENABLE_UPLOAD_TO_BACKEND:
+        print("Testing remote API is available...")
+        try:
+            # Check if content bucket exists
+            bucket_exists = ensure_storage_bucket()
+            if bucket_exists:
+                print("Remote API test successful! Content bucket exists and is accessible.")
+                return True
+            else:
+                print("Remote API test failed. Content bucket does not exist or is not accessible.")
+                return False
+        except Exception as e:
+            print(f"API test failed with error: {str(e)}")
+            return False
+    
+    return True
+
+def filter_articles_with_custom_ai(article_folder: str):
+    """Process the articles with custom AI."""
+    article_files = get_article_files(article_folder)
+
+    filtered_article_files = []
+
+    print(f"Filtering {len(article_files)} articles with custom AI...")
+    for article_file in article_files:
+        article_path = os.path.join(article_folder, article_file)
+        
+        # Read article content
+        with open(article_path, 'r', encoding='utf-8') as f:
+            article_content = f.read()
+        
+        # Filter article
+        should_exclude = filter_article_with_custom_ai(article_content)
+        
+        if should_exclude:
+            print(f"Excluding article: {article_file} (matches exclusion criteria)")
+            # Remove the file as it's excluded
+            os.remove(article_path)
+        else:
+            print(f"Keeping article: {article_file}")
+            filtered_article_files.append(article_file)
+
+    print(f"Filtered articles. Kept {len(filtered_article_files)} out of {len(article_files)} articles.")
+
+
+def filter_article_with_custom_ai(article_content):
+    """
+    Use custom AI API process an article.
+    """
+    print("Assessing article content with custom AI...")
+
+    prompt = f"""
+    You are a content filter that checks if articles are related to any kind of sports or pro-vaccination. 
+    Answer only YES or NO like the following: ANSWER:YES or ANSWER:NO
+    
+    Here the content to review:
+    {article_content}    
+    """
+
+    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
+    print(f"Using model: {MODEL_NAME}")
+    
+    try:
+        print("Sending request to custom AI API...")
+        start_time = time.time()
+        
+        # Use a session for better connection handling
+        with requests.Session() as session:
+            # Set a longer timeout for the connection and read operations
+            session.mount('http://', requests.adapters.HTTPAdapter(
+                max_retries=3,
+                pool_connections=10,
+                pool_maxsize=10
+            ))
+            
+            # Send the request with streaming enabled
+            response = session.post(
+                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
+                json={
+                    "model": MODEL_NAME,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,  # Lower temperature for more deterministic answers
+                    "max_tokens": -1
+                },
+                timeout=AI_TIMEOUT,
+                stream=True  # Enable streaming to handle large responses
+            )
+            
+            # Check if the request was successful
+            response.raise_for_status()
+            
+            # Read the response in chunks
+            print("Reading response from custom AI API...")
+            response_content = ""
+            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
+                if chunk:
+                    response_content += chunk
+            
+            elapsed_time = time.time() - start_time
+            print(f"Received response from custom AI API in {elapsed_time:.2f} seconds")
+            
+            # Parse the response
+            result = json.loads(response_content)
+            
+            if 'choices' in result and len(result['choices']) > 0:
+                answer_raw = result['choices'][0]['message']['content'].strip()
+                print(f"AI raw response: {answer_raw}")
+                answer = answer_raw.split("ANSWER:")[1].strip()
+                print(f"AI response: {answer}")
+                
+                # Return True if the answer is YES (exclude the article)
+                return "YES" in answer
+            else:
+                print("Error: Unexpected response format from custom AI API")
+                print(f"Response: {json.dumps(result, indent=2)}")
+                return False  # Keep the article if there's an error
+                
+    except Exception as e:
+        print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
+        return False  # Keep the article if there's an error
+
+def score_article_with_custom_ai(article_content) -> Tuple[Optional[float], Optional[str]]:
+    """
+    Use custom AI API process an article.
+    """
+    print("Assesing article content with custom AI...")
+
+    prompt = f"""
+    You are a independent editor-in-chief doing a news article content review.
+    Please carefully read the whole article content below, not just an article title.
+    After analysis, please assign a political bias score to the content. 
+    The score must range from -1.0 (indicating strongly left-leaning framing) to +1.0 (indicating strongly right-leaning framing), with 0.0 representing neutrality or balance.
+    Replay on a separate line with the 'SCORE:' followed by a score float value, like one of the following: 'SCORE:-0.3' or 'SCORE:0.0' or 'SCORE:0.5'. 
+    Then add a comment why you assigned the score you did.
+    
+    Here the content to review:
+    {article_content}    
+    """
+    
+    print(f"Connecting to custom AI API at {CUSTOM_AI_ENDPOINT}...")
+    print(f"Using model: {MODEL_NAME}")
+    
+    try:
+        print("Sending request to custom AI API...")
+        start_time = time.time()
+        
+        # Use a session for better connection handling
+        with requests.Session() as session:
+            # Set a longer timeout for the connection and read operations
+            session.mount('http://', requests.adapters.HTTPAdapter(
+                max_retries=3,
+                pool_connections=10,
+                pool_maxsize=10
+            ))
+            
+            # Send the request with streaming enabled
+            response = session.post(
+                f"{CUSTOM_AI_ENDPOINT}/v1/chat/completions",
+                json={
+                    "model": MODEL_NAME,
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.3,  # Lower temperature for more deterministic answers
+                    "max_tokens": -1
+                },
+                timeout=AI_TIMEOUT,
+                stream=True  # Enable streaming to handle large responses
+            )
+            
+            # Check if the request was successful
+            response.raise_for_status()
+            
+            # Read the response in chunks
+            print("Reading response from custom AI API...")
+            response_content = ""
+            for chunk in response.iter_content(chunk_size=AI_CHUNK_SIZE, decode_unicode=True):
+                if chunk:
+                    response_content += chunk
+            
+            elapsed_time = time.time() - start_time
+            print(f"Received response from custom AI API in {elapsed_time:.2f} seconds")
+            
+            # Parse the response
+            result = json.loads(response_content)
+            
+            if 'choices' in result and len(result['choices']) > 0:
+                answer_raw = result['choices'][0]['message']['content'].strip()
+                print(f"AI raw response: {answer_raw}")
+                # answer = answer_raw.split("SCORE:")[1].strip()
+                # answer = answer.split("\n")[0].strip()
+
+                score_line = answer_raw.split("SCORE:")
+                if len(score_line) <= 1:
+                    score_line = answer_raw.split("Score:")
+                if len(score_line) <= 1:
+                    score_line = answer_raw.split("score:")
+
+                answer_s = score_line[1].split("\n")[0].strip("*").strip()
+                try:
+                    answer = float(answer_s)
+                except Exception as e:
+                    print(f"Error converting score to float: {e}")
+                    return None, None
+                    
+                print(f"*** AI score: {answer}")
+                reason_text = answer_raw.split("</think>")
+                reason = reason_text[1] if len(reason_text) > 1 else answer_raw
+                if reason.startswith("Ok"):
+                    reason_text = reason.split("\n",1)
+                    if len(reason_text) > 1:
+                        reason = reason_text[1]
+                reason = reason.strip()
+                print(f"*** AI reason: {reason}")
+                print(f"***")
+                return answer, reason
+            else:
+                print("Error: Unexpected response format from custom AI API")
+                print(f"Response: {json.dumps(result, indent=2)}")
+                return None, None
+                
+    except Exception as e:
+        print(f"Error when calling custom AI API: {type(e).__name__} - {e}")
+        return None, None
+
+
+
+def process_news_content(article_date: str):
+    """Process the news content and generate all necessary files."""
+    try:
+        article_folder = get_date_based_filename(article_date, "article", "")
+
+        if ENABLE_FILTERING_WITH_CUSTOM_AI:
+            # Filter articles with custom AI
+            filter_articles_with_custom_ai(article_folder)
+        
+        if ENABLE_UPLOAD_TO_BACKEND:
+            # Upload the filtered articles to Supabase
+            upload_articles_to_supabase(article_date, article_folder)
+
+        # Generate audio files for filtered articles
+        try:
+            generate_audio_for_articles(article_date, article_folder, TTS_PROVIDER)
+            print("Audio files generated successfully.")
+        except Exception as e:
+            print(f"Error generating audio files: {str(e)}")
+
+        return True
+    except Exception as e:
+        print(f"Error processing news content: {str(e)}")
+        return False

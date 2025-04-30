@@ -33,6 +33,7 @@ ENABLE_UPLOAD_TO_BACKEND = True
 ENABLE_SCORING_WITH_CUSTOM_AI = True
 UPDATE_SCORES_WITH_CUSTOM_AI = False
 UPDATE_SCORES_WITH_CUSTOM_AI = True
+REMOVE_OLD_FILES = False
 CUSTOM_AI_ENDPOINT = "http://127.0.0.1:1234"
 # MODEL_NAME = "deepseek-r1-distill-qwen-7b"
 # MODEL_NAME = "deepseek-r1-distill-qwen-14b"
@@ -60,7 +61,7 @@ def load_local_lms_model():
     print(f"Local LM Studio Model loaded: {model_for_scoring}")
 
 # Function to test the API functionality
-def test_api_functionality():
+def check_supabase():
     """Test the API functionality by checking if it's available and content bucket exists."""
     
     if ENABLE_UPLOAD_TO_BACKEND:
@@ -426,6 +427,56 @@ def score_article_with_lms(article_content) -> Tuple[Optional[float], Optional[s
         print(f"Error when calling local LM Studio: {type(e).__name__} - {e}")
         return None, None
 
+def clean_old_files_from_supabase():
+    """Remove files from Supabase that are more than 7 days old."""
+    try:
+        print("Cleaning up old files from Supabase...")
+        
+        # Calculate date 7 days ago
+        from datetime import timedelta
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        date_cutoff = seven_days_ago.strftime("%Y-%m-%d")
+        
+        # Query database for old entries
+        results = supabase.table("content").select("*").lt("date", date_cutoff).execute()
+        
+        if not results.data:
+            print("No old files found to remove.")
+            return True
+            
+        print(f"Found {len(results.data)} entries older than {date_cutoff}")
+        
+        # Delete each entry and associated storage files
+        for entry in results.data:
+            date_str = entry.get('date')
+            content_type = entry.get('content_type')
+            filename = entry.get('filename')
+            
+            if not all([date_str, content_type, filename]):
+                print(f"Skipping entry with missing data: {entry}")
+                continue
+                
+            # Delete from storage
+            try:
+                path = f"{date_str}/{content_type}/{filename}"
+                print(f"Deleting file from storage: {path}")
+                supabase.storage.from_('content').remove([path])
+            except Exception as e:
+                print(f"Error deleting file {path} from storage: {str(e)}")
+            
+            # Delete database entry
+            try:
+                print(f"Deleting database entry: {entry['id']}")
+                supabase.table("content").delete().eq("id", entry['id']).execute()
+            except Exception as e:
+                print(f"Error deleting database entry {entry['id']}: {str(e)}")
+        
+        print("Cleanup of old files completed successfully.")
+        return True
+    except Exception as e:
+        print(f"Error cleaning up old files: {str(e)}")
+        return False
+
 def scrape_first_news_link(url: str, force_refresh: bool = False):
     """Scrape the first news link found on the page."""
     with sync_playwright() as p:
@@ -591,6 +642,7 @@ def main():
     parser.add_argument("--no-supabase", action="store_true", help="Disable upload to supabase")
     parser.add_argument("--no-scoring", action="store_true", help="Disable AI scoring")
     parser.add_argument("--update-scores", action="store_true", help="Update AI scores")
+    parser.add_argument("--remove-old", action="store_true", help="Remove files and entries older than 7 days")
     args = parser.parse_args()
 
     global REFRESH_NEWS_CONTENT
@@ -598,6 +650,7 @@ def main():
     global ENABLE_UPLOAD_TO_BACKEND
     global ENABLE_SCORING_WITH_CUSTOM_AI
     global UPDATE_SCORES_WITH_CUSTOM_AI
+    global REMOVE_OLD_FILES
     
     if args.refresh_news_content:
         REFRESH_NEWS_CONTENT = True
@@ -614,15 +667,23 @@ def main():
     if args.update_scores:
         UPDATE_SCORES_WITH_CUSTOM_AI = True
         print("Updating AI scores")
+    if args.remove_old:
+        REMOVE_OLD_FILES = True
+        print("Removing old files")
 
     try:
         print("Starting script...")
         
-        # Test API functionality
-        print("Testing API functionality...")
-        api_test_success = test_api_functionality()
-        if not api_test_success:
-            print("API test failed. Exiting script.")
+        print("Checking Supabase accesss...")
+        check_success = check_supabase()
+        if not check_success:
+            print("Supabase test failed.")
+            return
+        
+         # Remove old files if the flag is set
+        if REMOVE_OLD_FILES and ENABLE_UPLOAD_TO_BACKEND:
+            clean_old_files_from_supabase()
+            print("Supabase old file removed. Exiting maintenance mode.")
             return
         
         if ENABLE_FILTERING_WITH_CUSTOM_AI or ENABLE_SCORING_WITH_CUSTOM_AI:
